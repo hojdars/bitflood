@@ -1,6 +1,10 @@
 package decode
 
-import "testing"
+import (
+	"encoding/hex"
+	"reflect"
+	"testing"
+)
 
 type MockFile struct {
 	position int
@@ -55,7 +59,10 @@ func TestMock(t *testing.T) {
 func TestDecode(t *testing.T) {
 	t.Run("test basic decode", func(t *testing.T) {
 		mock := New("d8:announce37:http://tracker.test.org:6969/announce7:comment34:Testing data for bitflood purposes10:created by12:bitflood 0.113:creation datei1718445002e4:infod6:lengthi12345e4:name8:test.iso12:piece lengthi262144e6:pieces20:aabbccddeeffgghhiijjee")
-		torrent := Decode(mock)
+		torrent, err := Decode(mock)
+		if err != nil {
+			t.Errorf("got error=%e", err)
+		}
 		assertEqual(t, torrent.Announce, "http://tracker.test.org:6969/announce")
 		assertEqual(t, torrent.Comment, "Testing data for bitflood purposes")
 		assertEqual(t, torrent.CreatedBy, "bitflood 0.1")
@@ -64,15 +71,26 @@ func TestDecode(t *testing.T) {
 		assertEqual(t, torrent.Name, "test.iso")
 		assertEqual(t, torrent.PieceLength, 262144)
 		assertEqual(t, len(torrent.Pieces), 1)
-		binData := [20]byte{}
-		copy(binData[:], []byte("aabbccddeeffgghhiijj"))
-		assertEqual(t, torrent.Pieces[0], binData)
+		assertArrayEqual(t, torrent.Pieces[0], []byte("aabbccddeeffgghhiijj"))
+
+		infoHashSlice, err := hex.DecodeString("96911ea49cf0e5066f85e755f92cb66017b412d9")
+		if err != nil {
+			t.Errorf("could not decode hex string to bytes")
+		}
+		assertArrayEqual(t, torrent.InfoHash, infoHashSlice)
 	})
 }
 
 func assertEqual[T comparable](t *testing.T, got, want T) {
 	t.Helper()
 	if got != want {
+		t.Errorf("got '%v', wanted '%v'", got, want)
+	}
+}
+
+func assertArrayEqual(t *testing.T, got [20]byte, want []byte) {
+	t.Helper()
+	if reflect.DeepEqual(got, want) {
 		t.Errorf("got '%v', wanted '%v'", got, want)
 	}
 }
