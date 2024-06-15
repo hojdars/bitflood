@@ -28,6 +28,11 @@ func main() {
 
 	torrent := decode.Decode(file)
 
+	if torrent.Length == 0 {
+		// TODO: specification requires either 'length' or 'key files', implement 'key files'
+		log.Fatalf("key 'length' is missing, unsupported .torrent file")
+	}
+
 	log.Printf("detected tracker url=%s", torrent.Announce)
 	log.Printf("read torrent file=%s, size=%s", torrent.Name, humanize.Bytes(uint64(torrent.Length)))
 }
