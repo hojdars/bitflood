@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/dustin/go-humanize"
 	"github.com/hojdars/bitflood/internal/decode"
 )
 
@@ -27,7 +28,6 @@ func main() {
 
 	torrent := decode.Decode(file)
 
-	log.Printf("tracker url=%s", torrent.Announce)
-	log.Printf("name=%s, comment=%s, created by=%s, creation date=%d", torrent.Name, torrent.Comment, torrent.CreatedBy, torrent.CreationDate)
-	log.Printf("piece length=%d, length=%d, total length of pieces=%d", torrent.PieceLength, torrent.Length, len(torrent.Pieces))
+	log.Printf("detected tracker url=%s", torrent.Announce)
+	log.Printf("read torrent file=%s, size=%s", torrent.Name, humanize.Bytes(uint64(torrent.Length)))
 }
