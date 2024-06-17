@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/dustin/go-humanize"
-	"github.com/hojdars/bitflood/internal/decode"
+	"github.com/hojdars/bitflood/decode"
 )
 
 func main() {
