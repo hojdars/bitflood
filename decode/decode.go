@@ -6,20 +6,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/hojdars/bitflood/types"
 	"github.com/jackpal/bencode-go"
 )
-
-type TorrentFile struct {
-	Announce     string
-	Name         string
-	Comment      string
-	CreatedBy    string
-	CreationDate int
-	Length       int
-	PieceLength  int
-	Pieces       [][20]byte
-	InfoHash     [20]byte
-}
 
 type bitTorrentFile struct {
 	Announce     string
@@ -36,34 +25,34 @@ type bitTorrentInfo struct {
 	Pieces      string `bencode:"pieces"`
 }
 
-func Decode(file io.Reader) (TorrentFile, error) {
+func Decode(file io.Reader) (types.TorrentFile, error) {
 	torrent := bitTorrentFile{}
 	err := bencode.Unmarshal(file, &torrent)
 	if err != nil {
-		return TorrentFile{}, fmt.Errorf("decoding the bencode failed, error=%e", err)
+		return types.TorrentFile{}, fmt.Errorf("decoding the bencode failed, error=%e", err)
 	}
 
 	if len(torrent.Info.Pieces)%20 != 0 {
-		return TorrentFile{}, fmt.Errorf("length of pieces is not divisable by 20, malformed torrent file, len of pieces=%d", len(torrent.Info.Pieces))
+		return types.TorrentFile{}, fmt.Errorf("length of pieces is not divisable by 20, malformed torrent file, len of pieces=%d", len(torrent.Info.Pieces))
 	}
 
 	numberOfHashes := len(torrent.Info.Pieces) / 20
 
 	infoHash, err := computeInfoHash(&torrent.Info)
 	if err != nil {
-		return TorrentFile{}, fmt.Errorf("cannot compute 'info_hash', error=%e", err)
+		return types.TorrentFile{}, fmt.Errorf("cannot compute 'info_hash', error=%e", err)
 	}
 
-	result := TorrentFile{
-		torrent.Announce,
-		torrent.Info.Name,
-		torrent.Comment,
-		torrent.CreatedBy,
-		torrent.CreationDate,
-		torrent.Info.Length,
-		torrent.Info.PieceLength,
-		make([][20]byte, numberOfHashes),
-		infoHash,
+	result := types.TorrentFile{
+		Announce:     torrent.Announce,
+		Name:         torrent.Info.Name,
+		Comment:      torrent.Comment,
+		CreatedBy:    torrent.CreatedBy,
+		CreationDate: torrent.CreationDate,
+		Length:       torrent.Info.Length,
+		PieceLength:  torrent.Info.PieceLength,
+		Pieces:       make([][20]byte, numberOfHashes),
+		InfoHash:     infoHash,
 	}
 
 	for i := 0; i < numberOfHashes; i += 1 {

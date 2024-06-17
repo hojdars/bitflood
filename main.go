@@ -5,8 +5,11 @@ import (
 	"os"
 
 	"github.com/dustin/go-humanize"
+	"github.com/hojdars/bitflood/bittorrent"
 	"github.com/hojdars/bitflood/decode"
 )
+
+const Port int = 6881
 
 func main() {
 	if len(os.Args) != 2 {
@@ -28,7 +31,7 @@ func main() {
 
 	torrent, err := decode.Decode(file)
 	if err != nil {
-		log.Fatalf("error during .torrent file decoding, err=%e", err)
+		log.Fatalf("encountered an error during .torrent file decoding, err=%e", err)
 	}
 
 	if torrent.Length == 0 {
@@ -38,4 +41,10 @@ func main() {
 
 	log.Printf("tracker url=%s", torrent.Announce)
 	log.Printf("torrent file=%s, size=%s", torrent.Name, humanize.Bytes(uint64(torrent.Length)))
+
+	body, err := bittorrent.GetPeers(torrent, Port)
+	if err != nil {
+		log.Fatalf("encountered an error while retrieving peers from tracker, err=%e", err)
+	}
+	log.Printf("%s", body)
 }
