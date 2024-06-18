@@ -3,8 +3,10 @@ package decode
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 
 	"github.com/hojdars/bitflood/types"
 	"github.com/jackpal/bencode-go"
@@ -25,7 +27,7 @@ type bitTorrentInfo struct {
 	Pieces      string `bencode:"pieces"`
 }
 
-func Decode(file io.Reader) (types.TorrentFile, error) {
+func DecodeTorrentFile(file io.Reader) (types.TorrentFile, error) {
 	torrent := bitTorrentFile{}
 	err := bencode.Unmarshal(file, &torrent)
 	if err != nil {
@@ -59,6 +61,32 @@ func Decode(file io.Reader) (types.TorrentFile, error) {
 		copy(result.Pieces[i][:], torrent.Info.Pieces[i*20:(i+1)*20])
 	}
 
+	return result, nil
+}
+
+type bitTorrentPeers struct {
+	Interval int
+	Peers    string
+	Peers6   string
+}
+
+func DecodePeerInformation(body io.Reader) (types.PeerInformation, error) {
+	peers := bitTorrentPeers{}
+	err := bencode.Unmarshal(body, &peers)
+	if err != nil {
+		return types.PeerInformation{}, fmt.Errorf("error while de-bencoding peer information from tracker, err=%e", err)
+	}
+
+	if len(peers.Peers)%6 != 0 {
+		return types.PeerInformation{}, fmt.Errorf("peers array has to be divisible by 6, got len=%d", len(peers.Peers))
+	}
+	numberOfPeers := len(peers.Peers) / 6
+	result := types.PeerInformation{Interval: peers.Interval, IPs: make([]net.IP, numberOfPeers), Ports: make([]uint16, numberOfPeers)}
+	for i := 0; i < len(peers.Peers); i += 6 {
+		index := i / 6
+		result.IPs[index] = []byte(peers.Peers[i : i+4])
+		result.Ports[index] = binary.BigEndian.Uint16([]byte(peers.Peers[i+4 : i+6]))
+	}
 	return result, nil
 }
 

@@ -1,5 +1,7 @@
 package types
 
+import "net"
+
 type TorrentFile struct {
 	Announce     string
 	Name         string
@@ -10,4 +12,10 @@ type TorrentFile struct {
 	PieceLength  int
 	Pieces       [][20]byte
 	InfoHash     [20]byte
+}
+
+type PeerInformation struct {
+	Interval int
+	IPs      []net.IP
+	Ports    []uint16
 }

@@ -2,30 +2,32 @@ package bittorrent
 
 import (
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	"github.com/hojdars/bitflood/decode"
 	"github.com/hojdars/bitflood/types"
 )
 
-func GetPeers(torrent types.TorrentFile, port int) ([]byte, error) {
+func GetPeers(torrent types.TorrentFile, port int) (types.PeerInformation, error) {
 	trackerUrl, err := buildGetPeersUrl(torrent, port)
 	if err != nil {
-		return []byte{}, err
+		return types.PeerInformation{}, err
 	}
 
+	log.Printf("requesting peer information from tracker")
 	resp, err := http.Get(trackerUrl)
 	if err != nil {
-		return []byte{}, fmt.Errorf("sending GET request failed, url=%s, error=%e", trackerUrl, err)
+		return types.PeerInformation{}, fmt.Errorf("sending GET request failed, url=%s, error=%e", trackerUrl, err)
 	}
 
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := decode.DecodePeerInformation(resp.Body)
 	if err != nil {
-		return []byte{}, fmt.Errorf("IO read from HTTP response failed, error=%e", err)
+		return types.PeerInformation{}, fmt.Errorf("IO read from HTTP response failed, error=%e", err)
 	}
 	return body, nil
 }
