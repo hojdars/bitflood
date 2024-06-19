@@ -39,7 +39,6 @@ func main() {
 		log.Fatalf("key 'length' is missing, unsupported .torrent file")
 	}
 
-	log.Printf("tracker url=%s", torrent.Announce)
 	log.Printf("torrent file=%s, size=%s", torrent.Name, humanize.Bytes(uint64(torrent.Length)))
 
 	peerInfo, err := bittorrent.GetPeers(torrent, Port)

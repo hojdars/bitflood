@@ -4,6 +4,7 @@ import "net"
 
 type TorrentFile struct {
 	Announce     string
+	AnnounceList [][]string
 	Name         string
 	Comment      string
 	CreatedBy    string

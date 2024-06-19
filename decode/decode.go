@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 
+	"github.com/hojdars/bitflood/random"
 	"github.com/hojdars/bitflood/types"
 	"github.com/jackpal/bencode-go"
 )
@@ -18,6 +19,9 @@ type bitTorrentFile struct {
 	CreatedBy    string `bencode:"created by"`
 	CreationDate int    `bencode:"creation date"`
 	Info         bitTorrentInfo
+
+	// BEP:12 extension (Multitracker Metadata Extension)
+	AnnounceList [][]string `bencode:"announce-list"`
 }
 
 type bitTorrentInfo struct {
@@ -47,6 +51,7 @@ func DecodeTorrentFile(file io.Reader) (types.TorrentFile, error) {
 
 	result := types.TorrentFile{
 		Announce:     torrent.Announce,
+		AnnounceList: random.RandomizeAnnounceList(torrent.AnnounceList),
 		Name:         torrent.Info.Name,
 		Comment:      torrent.Comment,
 		CreatedBy:    torrent.CreatedBy,
