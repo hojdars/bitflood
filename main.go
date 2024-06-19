@@ -26,12 +26,12 @@ func main() {
 
 	file, err := os.Open(filename)
 	if err != nil {
-		log.Fatalf("cannot open file, error=%e", err)
+		log.Fatalf("cannot open file, err=%s", err)
 	}
 
 	torrent, err := decode.DecodeTorrentFile(file)
 	if err != nil {
-		log.Fatalf("encountered an error during .torrent file decoding, err=%e", err)
+		log.Fatalf("encountered an error during .torrent file decoding, err=%s", err)
 	}
 
 	if torrent.Length == 0 {
@@ -44,7 +44,7 @@ func main() {
 
 	peerInfo, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
-		log.Fatalf("encountered an error while retrieving peers from tracker, err=%e", err)
+		log.Fatalf("encountered an error while retrieving peers from tracker, err=%s", err)
 	}
 	log.Printf("received %d peers, interval=%d", len(peerInfo.IPs), peerInfo.Interval)
 }

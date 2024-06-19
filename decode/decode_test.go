@@ -49,7 +49,7 @@ func TestMock(t *testing.T) {
 		buf := make([]byte, test.bufferSize)
 		n, err := mock.Read(buf)
 		if err != nil {
-			t.Errorf("got error, error=%e", err)
+			t.Errorf("got error, err=%s", err)
 		}
 		assertEqual(t, n, len(test.correct))
 		assertEqual(t, string(buf[:n]), test.correct)
@@ -60,7 +60,7 @@ func TestDecodeTorrentFile(t *testing.T) {
 	mock := New("d8:announce37:http://tracker.test.org:6969/announce7:comment34:Testing data for bitflood purposes10:created by12:bitflood 0.113:creation datei1718445002e4:infod6:lengthi12345e4:name8:test.iso12:piece lengthi262144e6:pieces20:aabbccddeeffgghhiijjee")
 	torrent, err := DecodeTorrentFile(mock)
 	if err != nil {
-		t.Errorf("got error=%e", err)
+		t.Errorf("got err=%s", err)
 	}
 	assertEqual(t, torrent.Announce, "http://tracker.test.org:6969/announce")
 	assertEqual(t, torrent.Comment, "Testing data for bitflood purposes")
@@ -83,7 +83,7 @@ func TestDecodePeerInformation(t *testing.T) {
 	mock := New("d8:intervali900e5:peers6:1122126:peers60:e")
 	peers, err := DecodePeerInformation(mock)
 	if err != nil {
-		t.Errorf("got error=%e", err)
+		t.Errorf("got err=%s", err)
 	}
 	assertEqual(t, peers.Interval, 900)
 	assertEqual(t, len(peers.IPs), 1)

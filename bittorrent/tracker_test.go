@@ -13,7 +13,7 @@ func TestGetPeersUrl(t *testing.T) {
 	torrent.Length = 666
 	url, err := buildGetPeersUrl(torrent, 1234)
 	if err != nil {
-		t.Errorf("got error, err=%e", err)
+		t.Errorf("got error, err=%s", err)
 	}
 	want := "http://test.org/announce?compact=1&downloaded=0&event=started&info_hash=aabbccddeeffgghhiijj&left=666&peer_id=SH01-ziYDZM5WilvkDy9&port=1234&uploaded=0"
 	// check before random peer id

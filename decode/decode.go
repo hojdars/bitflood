@@ -31,7 +31,7 @@ func DecodeTorrentFile(file io.Reader) (types.TorrentFile, error) {
 	torrent := bitTorrentFile{}
 	err := bencode.Unmarshal(file, &torrent)
 	if err != nil {
-		return types.TorrentFile{}, fmt.Errorf("decoding the bencode failed, error=%e", err)
+		return types.TorrentFile{}, fmt.Errorf("decoding the bencode failed, err=%s", err)
 	}
 
 	if len(torrent.Info.Pieces)%20 != 0 {
@@ -42,7 +42,7 @@ func DecodeTorrentFile(file io.Reader) (types.TorrentFile, error) {
 
 	infoHash, err := computeInfoHash(&torrent.Info)
 	if err != nil {
-		return types.TorrentFile{}, fmt.Errorf("cannot compute 'info_hash', error=%e", err)
+		return types.TorrentFile{}, fmt.Errorf("cannot compute 'info_hash', err=%s", err)
 	}
 
 	result := types.TorrentFile{
@@ -74,7 +74,7 @@ func DecodePeerInformation(body io.Reader) (types.PeerInformation, error) {
 	peers := bitTorrentPeers{}
 	err := bencode.Unmarshal(body, &peers)
 	if err != nil {
-		return types.PeerInformation{}, fmt.Errorf("error while de-bencoding peer information from tracker, err=%e", err)
+		return types.PeerInformation{}, fmt.Errorf("error while de-bencoding peer information from tracker, err=%s", err)
 	}
 
 	if len(peers.Peers)%6 != 0 {
@@ -99,7 +99,7 @@ func computeInfoHash(info *bitTorrentInfo) ([20]byte, error) {
 	var buffer bytes.Buffer
 	err := bencode.Marshal(&buffer, *info)
 	if err != nil {
-		return [20]byte{}, fmt.Errorf("could not bencode bitTorrentInfo, error=%e", err)
+		return [20]byte{}, fmt.Errorf("could not bencode bitTorrentInfo, err=%s", err)
 	}
 	return sha1.Sum(buffer.Bytes()), nil
 }
