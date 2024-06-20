@@ -4,7 +4,6 @@ import "net"
 
 type TorrentFile struct {
 	Announce     string
-	AnnounceList [][]string
 	Name         string
 	Comment      string
 	CreatedBy    string
@@ -13,6 +12,9 @@ type TorrentFile struct {
 	PieceLength  int
 	Pieces       [][20]byte
 	InfoHash     [20]byte
+
+	// BEP:12 extension (Multitracker Metadata Extension)
+	AnnounceList [][]string
 }
 
 type PeerInformation struct {
