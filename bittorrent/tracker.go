@@ -25,6 +25,10 @@ func GetPeers(torrent types.TorrentFile, port int) (types.PeerInformation, error
 
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		return types.PeerInformation{}, fmt.Errorf("GET request ended with an error code, code=%d", resp.StatusCode)
+	}
+
 	body, err := decode.DecodePeerInformation(resp.Body)
 	if err != nil {
 		return types.PeerInformation{}, fmt.Errorf("IO read from HTTP response failed, err=%s", err)
