@@ -49,19 +49,6 @@ func GetPeers(torrent types.TorrentFile, port int) (types.PeerInformation, error
 	}
 }
 
-func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, port int) {
-	query := url.Values{}
-	query.Add("info_hash", string(torrent.InfoHash[:]))
-	query.Add("peer_id", MakePeerId())
-	query.Add("port", strconv.Itoa(port))
-	query.Add("uploaded", "0")
-	query.Add("downloaded", "0")
-	query.Add("left", strconv.Itoa(torrent.Length))
-	query.Add("event", "started")
-	query.Add("compact", strconv.Itoa(1))
-	trackerUrl.RawQuery = query.Encode()
-}
-
 func getFirstSupportedTracker(torrent types.TorrentFile, startTier, startTierPosition int) (Tracker, error) {
 	if len(torrent.AnnounceList) == 0 {
 		ann, err := url.Parse(torrent.Announce)
@@ -92,6 +79,19 @@ func getFirstSupportedTracker(torrent types.TorrentFile, startTier, startTierPos
 	}
 
 	return Tracker{}, fmt.Errorf("no supported tracker found")
+}
+
+func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, port int) {
+	query := url.Values{}
+	query.Add("info_hash", string(torrent.InfoHash[:]))
+	query.Add("peer_id", MakePeerId())
+	query.Add("port", strconv.Itoa(port))
+	query.Add("uploaded", "0")
+	query.Add("downloaded", "0")
+	query.Add("left", strconv.Itoa(torrent.Length))
+	query.Add("event", "started")
+	query.Add("compact", strconv.Itoa(1))
+	trackerUrl.RawQuery = query.Encode()
 }
 
 func getPeers(tracker Tracker) (types.PeerInformation, error) {
