@@ -2,8 +2,9 @@ package decode
 
 import (
 	"encoding/hex"
-	"slices"
 	"testing"
+
+	"github.com/hojdars/bitflood/assert"
 )
 
 type MockFile struct {
@@ -51,8 +52,8 @@ func TestMock(t *testing.T) {
 		if err != nil {
 			t.Errorf("got error, err=%s", err)
 		}
-		assertEqual(t, n, len(test.correct))
-		assertEqual(t, string(buf[:n]), test.correct)
+		assert.Equal(t, n, len(test.correct))
+		assert.Equal(t, string(buf[:n]), test.correct)
 	}
 }
 
@@ -62,21 +63,21 @@ func TestDecodeTorrentFile(t *testing.T) {
 	if err != nil {
 		t.Errorf("got err=%s", err)
 	}
-	assertEqual(t, torrent.Announce, "http://tracker.test.org:6969/announce")
-	assertEqual(t, torrent.Comment, "Testing data for bitflood purposes")
-	assertEqual(t, torrent.CreatedBy, "bitflood 0.1")
-	assertEqual(t, torrent.CreationDate, 1718445002)
-	assertEqual(t, torrent.Length, 12345)
-	assertEqual(t, torrent.Name, "test.iso")
-	assertEqual(t, torrent.PieceLength, 262144)
-	assertEqual(t, len(torrent.Pieces), 1)
-	assertSliceEqual(t, torrent.Pieces[0][:], []byte("aabbccddeeffgghhiijj"))
+	assert.Equal(t, torrent.Announce, "http://tracker.test.org:6969/announce")
+	assert.Equal(t, torrent.Comment, "Testing data for bitflood purposes")
+	assert.Equal(t, torrent.CreatedBy, "bitflood 0.1")
+	assert.Equal(t, torrent.CreationDate, 1718445002)
+	assert.Equal(t, torrent.Length, 12345)
+	assert.Equal(t, torrent.Name, "test.iso")
+	assert.Equal(t, torrent.PieceLength, 262144)
+	assert.Equal(t, len(torrent.Pieces), 1)
+	assert.SliceEqual(t, torrent.Pieces[0][:], []byte("aabbccddeeffgghhiijj"))
 
 	infoHashSlice, err := hex.DecodeString("96911ea49cf0e5066f85e755f92cb66017b412d9")
 	if err != nil {
 		t.Errorf("could not decode hex string to bytes")
 	}
-	assertSliceEqual(t, torrent.InfoHash[:], infoHashSlice)
+	assert.SliceEqual(t, torrent.InfoHash[:], infoHashSlice)
 }
 
 func TestDecodePeerInformation(t *testing.T) {
@@ -85,23 +86,9 @@ func TestDecodePeerInformation(t *testing.T) {
 	if err != nil {
 		t.Errorf("got err=%s", err)
 	}
-	assertEqual(t, peers.Interval, 900)
-	assertEqual(t, len(peers.IPs), 1)
-	assertEqual(t, len(peers.Ports), 1)
-	assertSliceEqual(t, []byte(peers.IPs[0]), []byte{49, 49, 50, 50})
-	assertEqual(t, peers.Ports[0], 12594)
-}
-
-func assertEqual[T comparable](t *testing.T, got, want T) {
-	t.Helper()
-	if got != want {
-		t.Errorf("got '%v', wanted '%v'", got, want)
-	}
-}
-
-func assertSliceEqual(t *testing.T, got, want []byte) {
-	t.Helper()
-	if !slices.Equal(got, want) {
-		t.Errorf("got '%v' (len=%v), wanted '%v'(len=%v)", got, len(got), want, len(want))
-	}
+	assert.Equal(t, peers.Interval, 900)
+	assert.Equal(t, len(peers.IPs), 1)
+	assert.Equal(t, len(peers.Ports), 1)
+	assert.SliceEqual(t, []byte(peers.IPs[0]), []byte{49, 49, 50, 50})
+	assert.Equal(t, peers.Ports[0], 12594)
 }

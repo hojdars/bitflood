@@ -2,8 +2,9 @@ package bittorrent
 
 import (
 	"bytes"
-	"slices"
 	"testing"
+
+	"github.com/hojdars/bitflood/assert"
 )
 
 func TestHandshake(t *testing.T) {
@@ -18,12 +19,12 @@ func TestHandshake(t *testing.T) {
 		t.Errorf("got error=%s", err)
 	}
 
-	assertEqual(t, got[0], byte(ProtocolNumber))
-	assertSliceEqual(t, got[1:20], []byte(ProtocolString))
-	assertSliceEqual(t, got[20:28], make([]byte, 8))
-	assertSliceEqual(t, got[28:48], data.infoHash[:])
-	assertSliceEqual(t, got[48:68], data.peerId[:])
-	assertEqual(t, len(got), 68)
+	assert.Equal(t, got[0], byte(ProtocolNumber))
+	assert.SliceEqual(t, got[1:20], []byte(ProtocolString))
+	assert.SliceEqual(t, got[20:28], make([]byte, 8))
+	assert.SliceEqual(t, got[28:48], data.infoHash[:])
+	assert.SliceEqual(t, got[48:68], data.peerId[:])
+	assert.Equal(t, len(got), 68)
 
 	reader := bytes.NewReader(got)
 	decoded, err := DeserializeHandshake(reader)
@@ -31,21 +32,7 @@ func TestHandshake(t *testing.T) {
 		t.Errorf("got error=%s", err)
 	}
 
-	assertEqual(t, data.extensions, decoded.extensions)
-	assertSliceEqual(t, data.infoHash[:], decoded.infoHash[:])
-	assertSliceEqual(t, decoded.peerId[:], decoded.peerId[:])
-}
-
-func assertEqual[T comparable](t *testing.T, got, want T) {
-	t.Helper()
-	if got != want {
-		t.Errorf("got '%v', wanted '%v'", got, want)
-	}
-}
-
-func assertSliceEqual(t *testing.T, got, want []byte) {
-	t.Helper()
-	if !slices.Equal(got, want) {
-		t.Errorf("got '%v' (len=%v), wanted '%v'(len=%v)", got, len(got), want, len(want))
-	}
+	assert.Equal(t, data.extensions, decoded.extensions)
+	assert.SliceEqual(t, data.infoHash[:], decoded.infoHash[:])
+	assert.SliceEqual(t, decoded.peerId[:], decoded.peerId[:])
 }
