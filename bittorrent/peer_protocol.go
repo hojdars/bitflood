@@ -2,6 +2,7 @@ package bittorrent
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 )
@@ -76,4 +77,50 @@ func DeserializeHandshake(reader io.Reader) (HandshakeData, error) {
 		infoHash:   [20]byte(dataBuf[ProtocolNumber+8 : ProtocolNumber+28]),
 		peerId:     [20]byte(dataBuf[ProtocolNumber+28 : ProtocolNumber+48]),
 	}, nil
+}
+
+const (
+	MsgChoke         byte = 0
+	MsgUnchoke       byte = 1
+	MsgInterested    byte = 2
+	MsgNotInterested byte = 3
+	MsgHave          byte = 4
+	MsgBitfield      byte = 5
+	MsgRequest       byte = 6
+	MsgPiece         byte = 7
+)
+
+type PeerMessage struct {
+	keepAlive bool
+	code      byte
+	data      []byte
+}
+
+func DeserializeMessage(r io.Reader) (PeerMessage, error) {
+	lengthBuf := make([]byte, 4)
+	_, err := io.ReadFull(r, lengthBuf)
+	if err != nil {
+		return PeerMessage{}, fmt.Errorf("error while reading message length, err=%s", err)
+	}
+
+	length := binary.BigEndian.Uint32(lengthBuf)
+	if length == 0 {
+		return PeerMessage{keepAlive: true}, nil
+	}
+
+	codeBuf := make([]byte, 1)
+	_, err = io.ReadFull(r, codeBuf)
+	if err != nil {
+		return PeerMessage{}, fmt.Errorf("error while reading message code, err=%s", err)
+	}
+
+	dataBuf := make([]byte, length-1)
+	if length-1 > 0 {
+		_, err = io.ReadFull(r, dataBuf)
+		if err != nil {
+			return PeerMessage{}, fmt.Errorf("error while reading message data, err=%s", err)
+		}
+	}
+
+	return PeerMessage{keepAlive: false, code: codeBuf[0], data: dataBuf}, nil
 }
