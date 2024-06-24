@@ -1,5 +1,11 @@
 test:
 	@go test ./...
 
-run:
-	@go run main.go $(FILE)
+build:
+	@go build
+
+run: build
+	./bitflood $(FILE)
+
+peer:
+	@go run cmd/peerconnect/main.go

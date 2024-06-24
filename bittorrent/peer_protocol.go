@@ -13,9 +13,9 @@ const ProtocolLength int = 48
 var ProtocolString string = "BitTorrent protocol"
 
 type HandshakeData struct {
-	extensions [8]byte
-	infoHash   [20]byte
-	peerId     [20]byte
+	Extensions [8]byte
+	InfoHash   [20]byte
+	PeerId     [20]byte
 }
 
 func SerializeHandshake(data HandshakeData) ([]byte, error) {
@@ -32,18 +32,18 @@ func SerializeHandshake(data HandshakeData) ([]byte, error) {
 		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
 	}
 
-	n, err = buffer.Write(data.extensions[:])
+	n, err = buffer.Write(data.Extensions[:])
 	if err != nil || n != 8 {
 		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
 	}
 
-	n, err = buffer.Write(data.infoHash[:])
-	if err != nil || n != len(data.infoHash) {
+	n, err = buffer.Write(data.InfoHash[:])
+	if err != nil || n != len(data.InfoHash) {
 		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
 	}
 
-	n, err = buffer.Write(data.peerId[:])
-	if err != nil || n != len(data.peerId) {
+	n, err = buffer.Write(data.PeerId[:])
+	if err != nil || n != len(data.PeerId) {
 		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
 	}
 
@@ -73,9 +73,9 @@ func DeserializeHandshake(reader io.Reader) (HandshakeData, error) {
 	}
 
 	return HandshakeData{
-		extensions: [8]byte(dataBuf[ProtocolNumber : ProtocolNumber+8]),
-		infoHash:   [20]byte(dataBuf[ProtocolNumber+8 : ProtocolNumber+28]),
-		peerId:     [20]byte(dataBuf[ProtocolNumber+28 : ProtocolNumber+48]),
+		Extensions: [8]byte(dataBuf[ProtocolNumber : ProtocolNumber+8]),
+		InfoHash:   [20]byte(dataBuf[ProtocolNumber+8 : ProtocolNumber+28]),
+		PeerId:     [20]byte(dataBuf[ProtocolNumber+28 : ProtocolNumber+48]),
 	}, nil
 }
 
@@ -91,19 +91,19 @@ const (
 )
 
 type PeerMessage struct {
-	keepAlive bool
-	code      byte
-	data      []byte
+	KeepAlive bool
+	Code      byte
+	Data      []byte
 }
 
 func SerializeMessage(msg PeerMessage) ([]byte, error) {
-	payloadLength := uint32(1 + len(msg.data)) // payload = without the 4B length at the start
+	payloadLength := uint32(1 + len(msg.Data)) // payload = without the 4B length at the start
 	result := make([]byte, 4+payloadLength)
 	binary.BigEndian.PutUint32(result[0:4], payloadLength)
-	result[4] = msg.code
-	copied := copy(result[5:], msg.data)
-	if copied != len(msg.data) {
-		return []byte{}, fmt.Errorf("did not copy the whole message, msg len=%d, copied=%d", len(msg.data), copied)
+	result[4] = msg.Code
+	copied := copy(result[5:], msg.Data)
+	if copied != len(msg.Data) {
+		return []byte{}, fmt.Errorf("did not copy the whole message, msg len=%d, copied=%d", len(msg.Data), copied)
 	}
 	return result, nil
 }
@@ -117,7 +117,7 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 
 	length := binary.BigEndian.Uint32(lengthBuf)
 	if length == 0 {
-		return PeerMessage{keepAlive: true}, nil
+		return PeerMessage{KeepAlive: true}, nil
 	}
 
 	codeBuf := make([]byte, 1)
@@ -134,5 +134,5 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 		}
 	}
 
-	return PeerMessage{keepAlive: false, code: codeBuf[0], data: dataBuf}, nil
+	return PeerMessage{KeepAlive: false, Code: codeBuf[0], Data: dataBuf}, nil
 }

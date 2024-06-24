@@ -24,17 +24,17 @@ type Response struct {
 	err      error
 }
 
-func GetPeers(torrent types.TorrentFile, port int) (types.PeerInformation, error) {
+func GetPeers(torrent types.TorrentFile, port int) (types.PeerInformation, string, error) {
 	tier := 0     // start at the first tier
 	tierPos := -1 // start at the first tracker of the tier
 	for {
 		tracker, err := getFirstSupportedTracker(torrent, tier, tierPos)
 		if err != nil {
-			return types.PeerInformation{}, fmt.Errorf("encoutered error while getting supported tracker, err=%s", err)
+			return types.PeerInformation{}, "", fmt.Errorf("encoutered error while getting supported tracker, err=%s", err)
 		}
 
 		log.Printf("choosing tracker url=%s", tracker.url.String())
-		addGetPeersQuery(tracker.url, torrent, port)
+		peerId := addGetPeersQuery(tracker.url, torrent, port)
 		peers, err := getPeers(tracker)
 
 		if err != nil {
@@ -44,7 +44,7 @@ func GetPeers(torrent types.TorrentFile, port int) (types.PeerInformation, error
 			continue
 		} else {
 			// TODO: According to BEP:12, we should re-order the 'announce-list'
-			return peers, nil
+			return peers, peerId, nil
 		}
 	}
 }
@@ -81,10 +81,11 @@ func getFirstSupportedTracker(torrent types.TorrentFile, startTier, startTierPos
 	return Tracker{}, fmt.Errorf("no supported tracker found")
 }
 
-func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, port int) {
+func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, port int) string {
+	peerId := MakePeerId()
 	query := url.Values{}
 	query.Add("info_hash", string(torrent.InfoHash[:]))
-	query.Add("peer_id", MakePeerId())
+	query.Add("peer_id", peerId)
 	query.Add("port", strconv.Itoa(port))
 	query.Add("uploaded", "0")
 	query.Add("downloaded", "0")
@@ -92,6 +93,7 @@ func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, port int) 
 	query.Add("event", "started")
 	query.Add("compact", strconv.Itoa(1))
 	trackerUrl.RawQuery = query.Encode()
+	return peerId
 }
 
 func getPeers(tracker Tracker) (types.PeerInformation, error) {

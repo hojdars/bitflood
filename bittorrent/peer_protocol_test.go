@@ -11,9 +11,9 @@ import (
 
 func TestHandshake(t *testing.T) {
 	data := HandshakeData{
-		extensions: [8]byte{},
-		infoHash:   [20]byte([]byte("aabbccddeeffgghhiijj")),
-		peerId:     [20]byte([]byte("SH01-1234567890abcde")),
+		Extensions: [8]byte{},
+		InfoHash:   [20]byte([]byte("aabbccddeeffgghhiijj")),
+		PeerId:     [20]byte([]byte("SH01-1234567890abcde")),
 	}
 	got, err := SerializeHandshake(data)
 
@@ -24,8 +24,8 @@ func TestHandshake(t *testing.T) {
 	assert.Equal(t, got[0], byte(ProtocolNumber))
 	assert.SliceEqual(t, got[1:20], []byte(ProtocolString))
 	assert.SliceEqual(t, got[20:28], make([]byte, 8))
-	assert.SliceEqual(t, got[28:48], data.infoHash[:])
-	assert.SliceEqual(t, got[48:68], data.peerId[:])
+	assert.SliceEqual(t, got[28:48], data.InfoHash[:])
+	assert.SliceEqual(t, got[48:68], data.PeerId[:])
 	assert.Equal(t, len(got), 68)
 
 	reader := bytes.NewReader(got)
@@ -34,9 +34,9 @@ func TestHandshake(t *testing.T) {
 		t.Errorf("got error=%s", err)
 	}
 
-	assert.Equal(t, data.extensions, decoded.extensions)
-	assert.SliceEqual(t, data.infoHash[:], decoded.infoHash[:])
-	assert.SliceEqual(t, decoded.peerId[:], decoded.peerId[:])
+	assert.Equal(t, data.Extensions, decoded.Extensions)
+	assert.SliceEqual(t, data.InfoHash[:], decoded.InfoHash[:])
+	assert.SliceEqual(t, decoded.PeerId[:], decoded.PeerId[:])
 }
 
 type MockReader struct {
@@ -65,9 +65,9 @@ func TestMessage(t *testing.T) {
 		got, err := DeserializeMessage(&mock)
 		assert.IsError(t, err)
 
-		assert.Equal(t, got.keepAlive, false)
-		assert.Equal(t, got.code, MsgUnchoke)
-		assert.Equal(t, len(got.data), 0)
+		assert.Equal(t, got.KeepAlive, false)
+		assert.Equal(t, got.Code, MsgUnchoke)
+		assert.Equal(t, len(got.Data), 0)
 	})
 
 	t.Run("test message deserialization with payload", func(t *testing.T) {
@@ -81,15 +81,15 @@ func TestMessage(t *testing.T) {
 		got, err := DeserializeMessage(&mock)
 		assert.IsError(t, err)
 
-		assert.Equal(t, got.keepAlive, false)
-		assert.Equal(t, got.code, MsgBitfield)
-		assert.Equal(t, len(got.data), 5)
-		assert.SliceEqual(t, got.data, messageData)
+		assert.Equal(t, got.KeepAlive, false)
+		assert.Equal(t, got.Code, MsgBitfield)
+		assert.Equal(t, len(got.Data), 5)
+		assert.SliceEqual(t, got.Data, messageData)
 	})
 
 	t.Run("serialize message", func(t *testing.T) {
 		msgData := []byte{1, 2, 3, 4, 5}
-		msg := PeerMessage{keepAlive: false, code: 5, data: msgData}
+		msg := PeerMessage{KeepAlive: false, Code: 5, Data: msgData}
 		got, err := SerializeMessage(msg)
 		assert.IsError(t, err)
 		assert.Equal(t, len(got), 4+1+len(msgData))
@@ -100,15 +100,15 @@ func TestMessage(t *testing.T) {
 
 	t.Run("serialize and deserialize message", func(t *testing.T) {
 		msgData := []byte{1, 2, 3, 4, 5}
-		msg := PeerMessage{keepAlive: false, code: 5, data: msgData}
+		msg := PeerMessage{KeepAlive: false, Code: 5, Data: msgData}
 		serialized, err := SerializeMessage(msg)
 		assert.IsError(t, err)
 		reader := bytes.NewReader(serialized)
 		fmt.Println(serialized)
 		got, err := DeserializeMessage(reader)
 		assert.IsError(t, err)
-		assert.Equal(t, got.keepAlive, msg.keepAlive)
-		assert.Equal(t, got.code, msg.code)
-		assert.SliceEqual(t, got.data, msg.data)
+		assert.Equal(t, got.KeepAlive, msg.KeepAlive)
+		assert.Equal(t, got.Code, msg.Code)
+		assert.SliceEqual(t, got.Data, msg.Data)
 	})
 }
