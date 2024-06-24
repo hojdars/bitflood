@@ -3,6 +3,7 @@ package bittorrent
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/hojdars/bitflood/assert"
@@ -54,7 +55,7 @@ func (mock *MockReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func TestReadMessage(t *testing.T) {
+func TestMessage(t *testing.T) {
 	t.Run("test message deserialization without payload", func(t *testing.T) {
 		data := make([]byte, 5)
 		binary.BigEndian.PutUint32(data[0:4], 1)
@@ -84,5 +85,30 @@ func TestReadMessage(t *testing.T) {
 		assert.Equal(t, got.code, MsgBitfield)
 		assert.Equal(t, len(got.data), 5)
 		assert.SliceEqual(t, got.data, messageData)
+	})
+
+	t.Run("serialize message", func(t *testing.T) {
+		msgData := []byte{1, 2, 3, 4, 5}
+		msg := PeerMessage{keepAlive: false, code: 5, data: msgData}
+		got, err := SerializeMessage(msg)
+		assert.IsError(t, err)
+		assert.Equal(t, len(got), 4+1+len(msgData))
+		assert.Equal(t, binary.BigEndian.Uint32(got[0:4]), uint32(1+len(msgData)))
+		assert.Equal(t, got[4], 5)
+		assert.SliceEqual(t, got[5:], msgData)
+	})
+
+	t.Run("serialize and deserialize message", func(t *testing.T) {
+		msgData := []byte{1, 2, 3, 4, 5}
+		msg := PeerMessage{keepAlive: false, code: 5, data: msgData}
+		serialized, err := SerializeMessage(msg)
+		assert.IsError(t, err)
+		reader := bytes.NewReader(serialized)
+		fmt.Println(serialized)
+		got, err := DeserializeMessage(reader)
+		assert.IsError(t, err)
+		assert.Equal(t, got.keepAlive, msg.keepAlive)
+		assert.Equal(t, got.code, msg.code)
+		assert.SliceEqual(t, got.data, msg.data)
 	})
 }

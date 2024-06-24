@@ -96,6 +96,18 @@ type PeerMessage struct {
 	data      []byte
 }
 
+func SerializeMessage(msg PeerMessage) ([]byte, error) {
+	payloadLength := uint32(1 + len(msg.data)) // payload = without the 4B length at the start
+	result := make([]byte, 4+payloadLength)
+	binary.BigEndian.PutUint32(result[0:4], payloadLength)
+	result[4] = msg.code
+	copied := copy(result[5:], msg.data)
+	if copied != len(msg.data) {
+		return []byte{}, fmt.Errorf("did not copy the whole message, msg len=%d, copied=%d", len(msg.data), copied)
+	}
+	return result, nil
+}
+
 func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 	lengthBuf := make([]byte, 4)
 	_, err := io.ReadFull(r, lengthBuf)
