@@ -1,6 +1,10 @@
 package types
 
-import "net"
+import (
+	"net"
+
+	"github.com/hojdars/bitflood/bitfield"
+)
 
 type TorrentFile struct {
 	Announce     string
@@ -21,4 +25,14 @@ type PeerInformation struct {
 	Interval int
 	IPs      []net.IP
 	Ports    []uint16
+}
+
+type Peer struct {
+	Downloaded uint32
+	ChokedBy   bool
+	Choking    bool
+	Interested bool
+	Bitfield   bitfield.Bitfield
+	ID         string
+	Addr       net.Addr
 }
