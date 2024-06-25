@@ -58,12 +58,12 @@ func DecodeTorrentFile(file io.Reader) (types.TorrentFile, error) {
 		CreationDate: torrent.CreationDate,
 		Length:       torrent.Info.Length,
 		PieceLength:  torrent.Info.PieceLength,
-		Pieces:       make([][20]byte, numberOfHashes),
+		PieceHashes:  make([][20]byte, numberOfHashes),
 		InfoHash:     infoHash,
 	}
 
 	for i := 0; i < numberOfHashes; i += 1 {
-		copy(result.Pieces[i][:], torrent.Info.Pieces[i*20:(i+1)*20])
+		copy(result.PieceHashes[i][:], torrent.Info.Pieces[i*20:(i+1)*20])
 	}
 
 	return result, nil

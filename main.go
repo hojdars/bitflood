@@ -18,7 +18,20 @@ import (
 
 const Port int = 6881
 
-func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string) {
+type request struct {
+	start  int
+	end    int
+	length int
+}
+
+type pieceProgress struct {
+	order    *pieceOrder
+	buf      []byte
+	numDone  int       // how many bytes are downloaded into 'buf'
+	requests []request // queue for requests
+}
+
+func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *pieceOrder) {
 	log.Printf("SEED: started a seeding to target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -37,21 +50,21 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 		Addr:       conn.RemoteAddr(),
 	}
 
-	log.Printf("SEED  [%s]: received correct handshake from target=%s, peer-id=%s", peer.Addr, conn.RemoteAddr().String(), peer.Addr)
+	log.Printf("SEED  [%s]: received correct handshake from target=%s, peer-id=%s", peer.ID, peer.Addr.String(), peer.Addr)
 
 	outHandshake := bittorrent.HandshakeData{Extensions: [8]byte{}, InfoHash: torrent.InfoHash, PeerId: [20]byte([]byte(peerId))}
 	outHandshakeBytes, err := bittorrent.SerializeHandshake(outHandshake)
 	if err != nil {
-		log.Printf("ERROR [%s]: error serializing handshake, err=%s", peer.Addr, err)
+		log.Printf("ERROR [%s]: error serializing handshake, err=%s", peer.ID, err)
 		return
 	}
 
 	_, err = conn.Write(outHandshakeBytes)
 	if err != nil {
-		log.Printf("ERROR [%s]: error sending handshake over TCP, err=%s", peer.Addr, err)
+		log.Printf("ERROR [%s]: error sending handshake over TCP, err=%s", peer.ID, err)
 		return
 	}
-	log.Printf("SEED  [%s]: sent handshake to target=%s, starting listening loop", peer.Addr, conn.RemoteAddr().String())
+	log.Printf("SEED  [%s]: sent handshake to target=%s, starting listening loop", peer.ID, peer.Addr.String())
 
 	msgChannel := make(chan bittorrent.PeerMessage)
 
@@ -60,7 +73,7 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 		for {
 			msg, err := bittorrent.DeserializeMessage(conn)
 			if err != nil {
-				log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", peer.Addr, conn.RemoteAddr().String(), err)
+				log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", peer.ID, peer.Addr.String(), err)
 				close(msgChannel)
 				return
 			}
@@ -68,31 +81,70 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 		}
 	}()
 
+	progress := pieceProgress{
+		order:    nil,
+		buf:      nil,
+		numDone:  0,
+		requests: nil,
+	}
+
 	// TODO: So far only listens to messages and logs them, seeding needs to be implemented
 	for {
+		// TODO:
+		// if should send keep alive, send keep alive
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), launch goroutine sending the requests
-		// if should send keep alive, send keep alive
+
+		// Check if we should request a piece (only request if we have the bitfield)
+		if progress.order == nil && peer.Bitfield.Length == len(torrent.PieceHashes) {
+			progress.order = getPiece(peer, workQueue)
+			if progress.order != nil {
+				log.Printf("SEED  [%s]: downloading piece index=%d", peer.ID, progress.order.index)
+				progress.buf = make([]byte, 0, progress.order.length)
+			}
+		}
 
 		// after this is done, block on context.Done or message incoming
 		select {
 		case <-ctx.Done():
-			log.Printf("SEED  [%s]: seeder closed", peer.Addr)
+			log.Printf("SEED  [%s]: seeder closed", peer.ID)
 			return
 		case msg, ok := <-msgChannel:
 			if !ok {
-				log.Printf("SEED  [%s]: connection to target=%s lost", peer.Addr, conn.RemoteAddr().String())
+				log.Printf("SEED  [%s]: connection to target=%s lost", peer.ID, peer.Addr.String())
 				return
 			}
 			if msg.KeepAlive {
 				continue
 			}
-			log.Printf("SEED  [%s]: received msg, code=%d from target=%s", peer.Addr, msg.Code, conn.RemoteAddr().String())
+			log.Printf("SEED  [%s]: received msg, code=%d from target=%s", peer.ID, msg.Code, peer.Addr)
 		}
 	}
 }
 
-func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string) {
+func getPiece(peer types.Peer, workQueue chan *pieceOrder) *pieceOrder {
+	select {
+	case order, ok := <-workQueue:
+		if !ok {
+			return nil
+		}
+		got, err := peer.Bitfield.Get(order.index)
+		if err != nil {
+			log.Printf("ERROR [%s]: error querying bitfield for piece, index=%d, err=%s", peer.ID, order.index, err)
+			workQueue <- order
+			return nil
+		}
+		if !got {
+			workQueue <- order
+			return nil
+		}
+		return order
+	default:
+		return nil
+	}
+}
+
+func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *pieceOrder) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
 	if err != nil {
 		log.Fatalf("encountered error listening on port=%d, error=%s", Port, err)
@@ -104,8 +156,14 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId str
 			log.Printf("ERROR: accept failed")
 		}
 
-		go seed(ctx, conn, torrent, peerId)
+		go seed(ctx, conn, torrent, peerId, workQueue)
 	}
+}
+
+type pieceOrder struct {
+	index  int
+	length int
+	hash   [20]byte
 }
 
 func main() {
@@ -144,9 +202,11 @@ func main() {
 	}
 	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(peerInfo.IPs), peerInfo.Interval)
 
-	mainCtx, cancel := context.WithCancel(context.Background())
+	workQueue := make(chan *pieceOrder, len(torrent.PieceHashes))
+	// TODO: fill 'workQueue' with each piece
 
-	go listeningServer(mainCtx, &torrent, peerId)
+	mainCtx, cancel := context.WithCancel(context.Background())
+	go listeningServer(mainCtx, &torrent, peerId, workQueue)
 
 	signalChannel := make(chan os.Signal, 2)
 	signal.Notify(signalChannel, os.Interrupt, syscall.SIGINT)

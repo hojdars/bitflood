@@ -70,8 +70,8 @@ func TestDecodeTorrentFile(t *testing.T) {
 	assert.Equal(t, torrent.Length, 12345)
 	assert.Equal(t, torrent.Name, "test.iso")
 	assert.Equal(t, torrent.PieceLength, 262144)
-	assert.Equal(t, len(torrent.Pieces), 1)
-	assert.SliceEqual(t, torrent.Pieces[0][:], []byte("aabbccddeeffgghhiijj"))
+	assert.Equal(t, len(torrent.PieceHashes), 1)
+	assert.SliceEqual(t, torrent.PieceHashes[0][:], []byte("aabbccddeeffgghhiijj"))
 
 	infoHashSlice, err := hex.DecodeString("96911ea49cf0e5066f85e755f92cb66017b412d9")
 	if err != nil {

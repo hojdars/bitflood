@@ -14,7 +14,7 @@ type TorrentFile struct {
 	CreationDate int
 	Length       int
 	PieceLength  int
-	Pieces       [][20]byte
+	PieceHashes  [][20]byte
 	InfoHash     [20]byte
 
 	// BEP:12 extension (Multitracker Metadata Extension)
