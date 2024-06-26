@@ -88,6 +88,7 @@ const (
 	MsgBitfield      byte = 5
 	MsgRequest       byte = 6
 	MsgPiece         byte = 7
+	MsgCancel        byte = 8
 )
 
 type PeerMessage struct {
@@ -135,4 +136,20 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 	}
 
 	return PeerMessage{KeepAlive: false, Code: codeBuf[0], Data: dataBuf}, nil
+}
+
+func (msg PeerMessage) DeserializePiece() (index, begin int, piece []byte, err error) {
+	if msg.Code != MsgPiece {
+		err = fmt.Errorf("cannot deserialize piece message on a non-piece message, msg-code=%d", msg.Code)
+		return
+	}
+	if len(msg.Data) <= 8 {
+		err = fmt.Errorf("malformed piece message, too short, len=%d", len(msg.Data))
+		return
+	}
+
+	index = int(binary.BigEndian.Uint32(msg.Data[0:4]))
+	begin = int(binary.BigEndian.Uint32(msg.Data[4:8]))
+	piece = msg.Data[8:]
+	return
 }
