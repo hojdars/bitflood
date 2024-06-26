@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/bittorrent"
 	"github.com/hojdars/bitflood/decode"
 	"github.com/hojdars/bitflood/types"
@@ -29,6 +30,18 @@ type pieceProgress struct {
 	buf      []byte
 	numDone  int       // how many bytes are downloaded into 'buf'
 	requests []request // queue for requests
+}
+
+func (p *pieceProgress) DeleteRequest(start, length int) error {
+	for i, r := range p.requests {
+		if r.start == start && r.length == length {
+			// delete the element
+			p.requests[i] = p.requests[len(p.requests)-1]
+			p.requests = p.requests[:len(p.requests)-1]
+			return nil
+		}
+	}
+	return fmt.Errorf("could not find request with start=%d, length=%d", start, length)
 }
 
 func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *pieceOrder) {
@@ -93,7 +106,6 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 		// TODO:
 		// if should send keep alive, send keep alive
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
-		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), launch goroutine sending the requests
 
 		// Check if we should request a piece (only request if we have the bitfield)
 		if progress.order == nil && peer.Bitfield.Length == len(torrent.PieceHashes) {
@@ -103,6 +115,9 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 				progress.buf = make([]byte, 0, progress.order.length)
 			}
 		}
+
+		// [MVP] if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), launch goroutine sending the requests
+		// [MVP] if pieceProgress is 100%, we have a result
 
 		// after this is done, block on context.Done or message incoming
 		select {
@@ -118,6 +133,11 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 				continue
 			}
 			log.Printf("SEED  [%s]: received msg, code=%d from target=%s", peer.ID, msg.Code, peer.Addr)
+
+			err := handleMessage(msg, &peer, &progress, *torrent)
+			if err != nil {
+				log.Printf("ERROR [%s]: error while handling message, err=%s", peer.ID, err)
+			}
 		}
 	}
 }
@@ -142,6 +162,56 @@ func getPiece(peer types.Peer, workQueue chan *pieceOrder) *pieceOrder {
 	default:
 		return nil
 	}
+}
+
+func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile) error {
+	switch msg.Code {
+	case bittorrent.MsgChoke:
+		peer.ChokedBy = true
+	case bittorrent.MsgUnchoke:
+		peer.ChokedBy = false
+	case bittorrent.MsgInterested:
+		peer.Interested = true
+	case bittorrent.MsgNotInterested:
+		peer.Interested = false
+	case bittorrent.MsgHave:
+		// TODO: Seeding-only, peer confirmed to have received the piece
+		return nil
+	case bittorrent.MsgBitfield:
+		expectedLength := len(torrent.PieceHashes) / 8
+		if len(torrent.PieceHashes)%8 > 0 {
+			expectedLength += 1
+		}
+		if len(msg.Data) != expectedLength {
+			return fmt.Errorf("invalid bitfield length, received %d bytes, required %d bytes", len(msg.Data), expectedLength)
+		}
+		peer.Bitfield = bitfield.FromBytes(msg.Data, len(torrent.PieceHashes))
+		log.Printf("SEED  [%s]: received bitfield", peer.ID)
+	case bittorrent.MsgRequest:
+		// TODO: Seeding-only, peer is requesting a piece
+		return nil
+	case bittorrent.MsgPiece:
+		index, begin, data, err := msg.DeserializePiece()
+		if err != nil {
+			return fmt.Errorf("error while parsing piece message, err=%s", err)
+		}
+		if index != progress.order.index {
+			return fmt.Errorf("received a chunk of a different piece, want piece index=%d, got piece index=%d", progress.order.index, index)
+		}
+		err = progress.DeleteRequest(begin, len(data))
+		if err != nil {
+			return fmt.Errorf("error while deleting request, err=%s", err)
+		}
+		progress.numDone += len(data)
+		if begin+len(data) > len(progress.buf) {
+			return fmt.Errorf("data is too long, buf length=%d, got begin=%d and len=%d", len(progress.buf), begin, len(data))
+		}
+		copy(progress.buf[begin:], data)
+	case bittorrent.MsgCancel:
+		// TODO: Seeding-only, endgame only
+		return nil
+	}
+	return nil
 }
 
 func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *pieceOrder) {
@@ -194,7 +264,7 @@ func main() {
 		log.Fatalf("key 'length' is missing, unsupported .torrent file")
 	}
 
-	log.Printf("torrent file=%s, size=%s", torrent.Name, humanize.Bytes(uint64(torrent.Length)))
+	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
 	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
@@ -203,7 +273,7 @@ func main() {
 	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(peerInfo.IPs), peerInfo.Interval)
 
 	workQueue := make(chan *pieceOrder, len(torrent.PieceHashes))
-	// TODO: fill 'workQueue' with each piece
+	// [MVP] TODO: fill 'workQueue' with each piece
 
 	mainCtx, cancel := context.WithCancel(context.Background())
 	go listeningServer(mainCtx, &torrent, peerId, workQueue)
@@ -219,7 +289,7 @@ func main() {
 			log.Printf("SIGINT caught, terminating")
 			cancel()
 			time.Sleep(time.Second)
-			// TODO: save everything we have to disk
+			// [MVP] TODO: save everything we have to disk by implementing 'pieceResult' which the downloaders send back
 			exit = true
 		}
 
