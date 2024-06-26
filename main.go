@@ -31,7 +31,7 @@ type pieceProgress struct {
 	buf           []byte
 	numDone       int       // how many bytes are downloaded into 'buf'
 	requests      []request // queue for requests
-	lastRequested int
+	nextToRequest int
 }
 
 func (p *pieceProgress) DeleteRequest(start, length int) error {
@@ -101,7 +101,7 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 		buf:           nil,
 		numDone:       0,
 		requests:      nil,
-		lastRequested: 0,
+		nextToRequest: 0,
 	}
 
 	// TODO: So far only listens to messages and logs them, seeding needs to be implemented
@@ -176,12 +176,12 @@ func getPiece(peer types.Peer, workQueue chan *pieceOrder) *pieceOrder {
 func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 	numberToSend := PipelineLength - len(progress.requests)
 	for i := 0; i < numberToSend; i++ {
-		if progress.lastRequested+ChunkSize > progress.order.length {
+		if progress.nextToRequest > progress.order.length {
 			break
 		}
 
-		len := min(ChunkSize, progress.order.length-progress.lastRequested+ChunkSize)
-		nextRequest := request{start: progress.lastRequested + ChunkSize, length: len}
+		len := min(ChunkSize, progress.order.length-progress.nextToRequest)
+		nextRequest := request{start: progress.nextToRequest, length: len}
 
 		// craft the message
 		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
@@ -201,7 +201,7 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 
 		// then add to the request list
 		progress.requests = append(progress.requests, nextRequest)
-		progress.lastRequested = nextRequest.start
+		progress.nextToRequest = nextRequest.start + ChunkSize
 		log.Printf("SEED  [%s]: requested chunk index=%d, start=%d, len=%d", peer.ID, progress.order.index, nextRequest.start, nextRequest.length)
 	}
 }
