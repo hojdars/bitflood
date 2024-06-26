@@ -28,11 +28,12 @@ type PeerInformation struct {
 }
 
 type Peer struct {
-	Downloaded uint32
-	ChokedBy   bool
-	Choking    bool
-	Interested bool
-	Bitfield   bitfield.Bitfield
-	ID         string
-	Addr       net.Addr
+	Downloaded     uint32
+	ChokedBy       bool
+	Choking        bool
+	Interested     bool
+	InterestedSent bool
+	Bitfield       bitfield.Bitfield
+	ID             string
+	Addr           net.Addr
 }

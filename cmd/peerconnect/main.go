@@ -61,6 +61,9 @@ func main() {
 	}
 	conn.Write(msgData)
 
+	// wait for interested
+	receiveMessage(conn, remotePeerId)
+
 	log.Println("sending unchoke")
 	msg = bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgUnchoke, Data: []byte{}}
 	msgData, err = bittorrent.SerializeMessage(msg)
@@ -75,20 +78,26 @@ func main() {
 
 func loopReceive(conn net.Conn, remotePeerId string) {
 	for {
-		msg, err := bittorrent.DeserializeMessage(conn)
+		receiveMessage(conn, remotePeerId)
+	}
+}
+
+func receiveMessage(conn net.Conn, remotePeerId string) {
+	msg, err := bittorrent.DeserializeMessage(conn)
+	if err != nil {
+		log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", remotePeerId, conn.RemoteAddr().String(), err)
+	}
+
+	log.Printf("received message, code=%d", msg.Code)
+	if msg.Code == bittorrent.MsgRequest {
+		index, begin, len, err := msg.DeserializeRequest()
 		if err != nil {
-			log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", remotePeerId, conn.RemoteAddr().String(), err)
+			log.Printf("ERROR [%s]: error while deserializing request message from target=%s, err=%s", remotePeerId, conn.RemoteAddr().String(), err)
 		}
-
-		log.Printf("received message, code=%d", msg.Code)
-		if msg.Code == bittorrent.MsgRequest {
-			index, begin, len, err := msg.DeserializeRequest()
-			if err != nil {
-				log.Printf("ERROR [%s]: error while deserializing request message from target=%s, err=%s", remotePeerId, conn.RemoteAddr().String(), err)
-			}
-			log.Printf("received request, index=%d, begin=%d, len=%d", index, begin, len)
-
-		}
+		log.Printf("received request, index=%d, begin=%d, len=%d", index, begin, len)
+	}
+	if msg.Code == bittorrent.MsgInterested {
+		log.Printf("got 'interested' message")
 	}
 }
 

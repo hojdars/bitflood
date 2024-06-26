@@ -57,12 +57,13 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	}
 
 	peer := types.Peer{
-		Downloaded: 0,
-		ChokedBy:   true,
-		Choking:    true,
-		Interested: false,
-		ID:         string(inHandshake.PeerId[:]),
-		Addr:       conn.RemoteAddr(),
+		Downloaded:     0,
+		ChokedBy:       true,
+		Choking:        true,
+		Interested:     false,
+		InterestedSent: false,
+		ID:             string(inHandshake.PeerId[:]),
+		Addr:           conn.RemoteAddr(),
 	}
 
 	log.Printf("SEED  [%s]: received correct handshake from target=%s, peer-id=%s", peer.ID, peer.Addr.String(), peer.Addr)
@@ -108,9 +109,10 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	for {
 		// TODO:
 		// if should send keep alive, send keep alive
+		// receive 'request' and 'interested' messages
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 
-		// Check if we should request a piece (only request if we have the bitfield)
+		// check if we should request a piece (only request if we have the bitfield)
 		if progress.order == nil && peer.Bitfield.Length == len(torrent.PieceHashes) {
 			progress.order = getPiece(peer, workQueue)
 			if progress.order != nil {
@@ -119,14 +121,17 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 			}
 		}
 
-		// [MVP] TODO: if we have a piece we want, send 'interested'
-
-		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), launch goroutine sending the requests
-		if progress.order != nil && !peer.ChokedBy && len(progress.requests) < PipelineLength {
-			go fillRequests(peer, conn, &progress)
+		// if we are interested but choked, send 'interested'
+		if progress.order != nil && peer.ChokedBy && !peer.InterestedSent {
+			sendInterested(&peer, conn)
 		}
 
-		// [MVP] TODO: if pieceProgress is 100%, we have a result -> verify hash and send through results channel
+		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), send the requests
+		if progress.order != nil && !peer.ChokedBy && len(progress.requests) < PipelineLength {
+			fillRequests(peer, conn, &progress)
+		}
+
+		// [MVP] TODO: if pieceProgress is 100%, we have a result -> verify hash, send 'have' message and send through results channel
 
 		// after this is done, block on context.Done or message incoming
 		select {
@@ -173,6 +178,21 @@ func getPiece(peer types.Peer, workQueue chan *pieceOrder) *pieceOrder {
 	}
 }
 
+func sendInterested(peer *types.Peer, conn net.Conn) {
+	msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgInterested, Data: []byte{}}
+	msgData, err := bittorrent.SerializeMessage(msg)
+	if err != nil {
+		log.Printf("ERROR [%s]: error while serializing 'interested' message, err=%s", peer.ID, err)
+		return
+	}
+	_, err = conn.Write(msgData)
+	if err != nil {
+		log.Printf("ERROR [%s]: error while sending 'interested' message, err=%s", peer.ID, err)
+		return
+	}
+	peer.InterestedSent = true
+}
+
 func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 	numberToSend := PipelineLength - len(progress.requests)
 	for i := 0; i < numberToSend; i++ {
@@ -188,6 +208,7 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 		msg.SerializeRequestData(progress.order.index, nextRequest.start, nextRequest.length)
 
 		// send over TCP
+		// TODO: technically, we can create the requests in this thread and then launch goroutine to send them
 		reqByte, err := bittorrent.SerializeMessage(msg)
 		if err != nil {
 			log.Printf("ERROR [%s]: error while serializing request message, err=%s", peer.ID, err)
@@ -211,6 +232,7 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 	case bittorrent.MsgChoke:
 		log.Printf("SEED  [%s]: choked", peer.ID)
 		peer.ChokedBy = true
+		peer.InterestedSent = false
 	case bittorrent.MsgUnchoke:
 		log.Printf("SEED  [%s]: unchoked", peer.ID)
 		peer.ChokedBy = false
