@@ -153,3 +153,21 @@ func (msg PeerMessage) DeserializePiece() (index, begin int, piece []byte, err e
 	piece = msg.Data[8:]
 	return
 }
+
+func (msg *PeerMessage) SerializeRequestData(index, begin, length int) {
+	msg.Data = make([]byte, 12)
+	binary.BigEndian.PutUint32(msg.Data[0:4], uint32(index))
+	binary.BigEndian.PutUint32(msg.Data[4:8], uint32(begin))
+	binary.BigEndian.PutUint32(msg.Data[8:12], uint32(length))
+}
+
+func (msg PeerMessage) DeserializeRequest() (index, begin, length int, err error) {
+	if len(msg.Data) < 12 {
+		err = fmt.Errorf("message data too short, expected 12B, got %dB", len(msg.Data))
+		return
+	}
+	index = int(binary.BigEndian.Uint32(msg.Data[0:4]))
+	begin = int(binary.BigEndian.Uint32(msg.Data[4:8]))
+	length = int(binary.BigEndian.Uint32(msg.Data[8:12]))
+	return
+}

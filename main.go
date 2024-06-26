@@ -18,18 +18,20 @@ import (
 )
 
 const Port int = 6881
+const PipelineLength int = 5
+const ChunkSize int = 1 << 14
 
 type request struct {
 	start  int
-	end    int
 	length int
 }
 
 type pieceProgress struct {
-	order    *pieceOrder
-	buf      []byte
-	numDone  int       // how many bytes are downloaded into 'buf'
-	requests []request // queue for requests
+	order         *pieceOrder
+	buf           []byte
+	numDone       int       // how many bytes are downloaded into 'buf'
+	requests      []request // queue for requests
+	lastRequested int
 }
 
 func (p *pieceProgress) DeleteRequest(start, length int) error {
@@ -95,10 +97,11 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	}()
 
 	progress := pieceProgress{
-		order:    nil,
-		buf:      nil,
-		numDone:  0,
-		requests: nil,
+		order:         nil,
+		buf:           nil,
+		numDone:       0,
+		requests:      nil,
+		lastRequested: 0,
 	}
 
 	// TODO: So far only listens to messages and logs them, seeding needs to be implemented
@@ -116,8 +119,14 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 			}
 		}
 
-		// [MVP] if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), launch goroutine sending the requests
-		// [MVP] if pieceProgress is 100%, we have a result
+		// [MVP] TODO: if we have a piece we want, send 'interested'
+
+		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), launch goroutine sending the requests
+		if progress.order != nil && !peer.ChokedBy && len(progress.requests) < PipelineLength {
+			go fillRequests(peer, conn, &progress)
+		}
+
+		// [MVP] TODO: if pieceProgress is 100%, we have a result -> verify hash and send through results channel
 
 		// after this is done, block on context.Done or message incoming
 		select {
@@ -164,11 +173,46 @@ func getPiece(peer types.Peer, workQueue chan *pieceOrder) *pieceOrder {
 	}
 }
 
+func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
+	numberToSend := PipelineLength - len(progress.requests)
+	for i := 0; i < numberToSend; i++ {
+		if progress.lastRequested+ChunkSize > progress.order.length {
+			break
+		}
+
+		len := min(ChunkSize, progress.order.length-progress.lastRequested+ChunkSize)
+		nextRequest := request{start: progress.lastRequested + ChunkSize, length: len}
+
+		// craft the message
+		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
+		msg.SerializeRequestData(progress.order.index, nextRequest.start, nextRequest.length)
+
+		// send over TCP
+		reqByte, err := bittorrent.SerializeMessage(msg)
+		if err != nil {
+			log.Printf("ERROR [%s]: error while serializing request message, err=%s", peer.ID, err)
+			break
+		}
+		_, err = conn.Write(reqByte)
+		if err != nil {
+			log.Printf("ERROR [%s]: error while sending request message, err=%s", peer.ID, err)
+			break
+		}
+
+		// then add to the request list
+		progress.requests = append(progress.requests, nextRequest)
+		progress.lastRequested = nextRequest.start
+		log.Printf("SEED  [%s]: requested chunk index=%d, start=%d, len=%d", peer.ID, progress.order.index, nextRequest.start, nextRequest.length)
+	}
+}
+
 func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile) error {
 	switch msg.Code {
 	case bittorrent.MsgChoke:
+		log.Printf("SEED  [%s]: choked", peer.ID)
 		peer.ChokedBy = true
 	case bittorrent.MsgUnchoke:
+		log.Printf("SEED  [%s]: unchoked", peer.ID)
 		peer.ChokedBy = false
 	case bittorrent.MsgInterested:
 		peer.Interested = true
@@ -274,6 +318,8 @@ func main() {
 
 	workQueue := make(chan *pieceOrder, len(torrent.PieceHashes))
 	// [MVP] TODO: fill 'workQueue' with each piece
+	p := pieceOrder{index: 0, length: torrent.PieceLength, hash: torrent.PieceHashes[0]}
+	workQueue <- &p
 
 	mainCtx, cancel := context.WithCancel(context.Background())
 	go listeningServer(mainCtx, &torrent, peerId, workQueue)
