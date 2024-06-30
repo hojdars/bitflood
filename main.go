@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -161,6 +162,23 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// receive 'request' and 'interested' messages
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 
+		// if pieceProgress is 100%, we have a result -> verify hash, send 'have' message and send through results channel
+		if progress.order != nil && progress.numDone == progress.order.length {
+			err := handlePieceComplete(conn, &progress, peer, workQueue)
+			if err != nil {
+				log.Printf("ERROR [%s]: error while handling a completed piece, err=%s", peer.ID, err)
+			} else {
+				// piece is done -> progress is reset
+				progress = pieceProgress{
+					order:         nil,
+					buf:           nil,
+					numDone:       0,
+					requests:      nil,
+					nextToRequest: 0,
+				}
+			}
+		}
+
 		// check if we should request a piece (only request if we have the bitfield)
 		if progress.order == nil && peer.Bitfield.Length == len(torrent.PieceHashes) {
 			progress.order = getPiece(*peer, workQueue)
@@ -178,30 +196,6 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), send the requests
 		if progress.order != nil && !peer.ChokedBy && len(progress.requests) < PipelineLength {
 			fillRequests(*peer, conn, &progress)
-		}
-
-		// if pieceProgress is 100%, we have a result -> verify hash, send 'have' message and send through results channel
-		if progress.order != nil && progress.numDone == progress.order.length {
-			log.Printf("SEED  [%s]: piece %d download complete", peer.ID, progress.order.index)
-			hash := sha1.Sum(progress.buf)
-			if !bytes.Equal(hash[:], progress.order.hash[:]) {
-				log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, progress.order.index)
-				workQueue <- progress.order
-			} else {
-				log.Printf("SEED  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.index)
-				// TODO: resultQueue <- progres
-				peer.Downloaded += uint32(progress.numDone)
-				// [MVP] TODO: Send 'have' message
-			}
-
-			// progress is reset
-			progress = pieceProgress{
-				order:         nil,
-				buf:           nil,
-				numDone:       0,
-				requests:      nil,
-				nextToRequest: 0,
-			}
 		}
 
 		// after this is done, block on context.Done or message incoming
@@ -296,6 +290,40 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 		progress.nextToRequest = nextRequest.start + ChunkSize
 		log.Printf("SEED  [%s]: requested chunk index=%d, start=%d, len=%d", peer.ID, progress.order.index, nextRequest.start, nextRequest.length)
 	}
+}
+
+func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, workQueue chan *pieceOrder) error {
+	log.Printf("SEED  [%s]: piece %d download complete", peer.ID, progress.order.index)
+	hash := sha1.Sum(progress.buf)
+	if !bytes.Equal(hash[:], progress.order.hash[:]) {
+		log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, progress.order.index)
+		workQueue <- progress.order
+		return nil
+	}
+
+	// send 'have' message
+	msgBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(msgBuf, uint32(progress.order.index))
+	msg := bittorrent.PeerMessage{
+		KeepAlive: false,
+		Code:      bittorrent.MsgHave,
+		Data:      msgBuf,
+	}
+
+	msgData, err := bittorrent.SerializeMessage(msg)
+	if err != nil {
+		return fmt.Errorf("ERROR [%s]: error while serializing 'have' message, err=%s", peer.ID, err)
+	}
+	_, err = conn.Write(msgData)
+	if err != nil {
+		return fmt.Errorf("ERROR [%s]: error while sending 'have' message, err=%s", peer.ID, err)
+	}
+
+	log.Printf("SEED  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.index)
+	// TODO: resultQueue <- progres
+	peer.Downloaded += uint32(progress.numDone)
+
+	return nil
 }
 
 func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile) error {
@@ -428,8 +456,10 @@ func main() {
 
 	workQueue := make(chan *pieceOrder, len(torrent.PieceHashes))
 	// [MVP] TODO: fill 'workQueue' with each piece
-	p := pieceOrder{index: 0, length: torrent.PieceLength, hash: torrent.PieceHashes[0]}
-	workQueue <- &p
+	p := &pieceOrder{index: 0, length: torrent.PieceLength, hash: torrent.PieceHashes[0]}
+	workQueue <- p
+	p = &pieceOrder{index: 1, length: torrent.PieceLength, hash: torrent.PieceHashes[1]}
+	workQueue <- p
 
 	mainCtx, cancel := context.WithCancel(context.Background())
 	go listeningServer(mainCtx, &torrent, peerId, workQueue)
