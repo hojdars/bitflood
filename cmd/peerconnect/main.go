@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hojdars/bitflood/bittorrent"
+	"github.com/hojdars/bitflood/types"
 )
 
 const BitFieldLength = 316
@@ -17,10 +18,8 @@ func main() {
 	peerId := bittorrent.MakePeerId()
 	log.Printf("starting with peer-id=%s", peerId)
 
-	data := bittorrent.HandshakeData{
-		Extensions: [8]byte{},
-		InfoHash:   [20]byte([]byte("aabbccddeeffgghhiijj")),
-		PeerId:     [20]byte([]byte(peerId)),
+	torrent := types.TorrentFile{
+		InfoHash: [20]byte([]byte("aabbccddeeffgghhiijj")),
 	}
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", TargetPort))
@@ -29,23 +28,12 @@ func main() {
 	}
 	defer conn.Close()
 
-	outHandshake, err := bittorrent.SerializeHandshake(data)
+	peer, err := bittorrent.InitiateConnection(conn, torrent, peerId)
 	if err != nil {
-		log.Fatalf("handshake serialization failed")
-	}
-	_, err = conn.Write(outHandshake)
-	if err != nil {
-		log.Fatalf("network write failed")
+		log.Fatalf("handshake failed")
 	}
 
-	inHandshake, err := bittorrent.DeserializeHandshake(conn)
-	if err != nil {
-		log.Printf("ERROR: failed handshake from target=%s", conn.RemoteAddr().String())
-		return
-	}
-
-	remotePeerId := string(inHandshake.PeerId[:])
-	log.Printf("received correct handshake from target=%s, peer-id=%s", conn.RemoteAddr().String(), remotePeerId)
+	log.Printf("received correct handshake from target=%s, peer-id=%s", conn.RemoteAddr().String(), peer.ID)
 
 	log.Println("sending full bitfield")
 
@@ -62,7 +50,7 @@ func main() {
 	conn.Write(msgData)
 
 	// wait for interested
-	receiveMessage(conn, remotePeerId)
+	receiveMessage(conn, peer.ID)
 
 	log.Println("sending unchoke")
 	msg = bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgUnchoke, Data: []byte{}}
@@ -73,7 +61,7 @@ func main() {
 	}
 	conn.Write(msgData)
 
-	loopReceive(conn, remotePeerId)
+	loopReceive(conn, peer.ID)
 }
 
 func loopReceive(conn net.Conn, remotePeerId string) {

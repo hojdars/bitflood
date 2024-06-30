@@ -15,7 +15,7 @@ func TestHandshake(t *testing.T) {
 		InfoHash:   [20]byte([]byte("aabbccddeeffgghhiijj")),
 		PeerId:     [20]byte([]byte("SH01-1234567890abcde")),
 	}
-	got, err := SerializeHandshake(data)
+	got, err := serializeHandshake(data)
 
 	if err != nil {
 		t.Errorf("got error=%s", err)
@@ -29,7 +29,7 @@ func TestHandshake(t *testing.T) {
 	assert.Equal(t, len(got), 68)
 
 	reader := bytes.NewReader(got)
-	decoded, err := DeserializeHandshake(reader)
+	decoded, err := deserializeHandshake(reader)
 	if err != nil {
 		t.Errorf("got error=%s", err)
 	}

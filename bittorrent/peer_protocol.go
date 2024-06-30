@@ -21,67 +21,6 @@ type HandshakeData struct {
 	PeerId     [20]byte
 }
 
-func SerializeHandshake(data HandshakeData) ([]byte, error) {
-	buf := make([]byte, 0, 68)
-	buffer := bytes.NewBuffer(buf)
-
-	err := buffer.WriteByte(byte(ProtocolNumber))
-	if err != nil {
-		return []byte{}, fmt.Errorf("error while writing into buffer, err=%s", err)
-	}
-
-	n, err := buffer.WriteString(ProtocolString)
-	if err != nil || n != ProtocolNumber {
-		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
-	}
-
-	n, err = buffer.Write(data.Extensions[:])
-	if err != nil || n != 8 {
-		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
-	}
-
-	n, err = buffer.Write(data.InfoHash[:])
-	if err != nil || n != len(data.InfoHash) {
-		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
-	}
-
-	n, err = buffer.Write(data.PeerId[:])
-	if err != nil || n != len(data.PeerId) {
-		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
-	}
-
-	return buffer.Bytes(), nil
-}
-
-func DeserializeHandshake(reader io.Reader) (HandshakeData, error) {
-	lenBuf := make([]byte, 1)
-	n, err := io.ReadFull(reader, lenBuf)
-	if err != nil {
-		return HandshakeData{}, fmt.Errorf("handshake first byte read failed, len=%d, err=%s", n, err)
-	}
-
-	len := int(lenBuf[0])
-	if len != ProtocolNumber {
-		return HandshakeData{}, fmt.Errorf("handshake is not the BitTorrent protocol, first byte: %d", len)
-	}
-
-	dataBuf := make([]byte, ProtocolNumber+ProtocolLength)
-	n, err = io.ReadFull(reader, dataBuf)
-	if err != nil {
-		return HandshakeData{}, fmt.Errorf("hanshake data read failed, len=%d, err=%s", n, err)
-	}
-
-	if string(dataBuf[0:ProtocolNumber]) != ProtocolString {
-		return HandshakeData{}, fmt.Errorf("hanshake does not contain the correct string, string=%s", string(dataBuf[0:20]))
-	}
-
-	return HandshakeData{
-		Extensions: [8]byte(dataBuf[ProtocolNumber : ProtocolNumber+8]),
-		InfoHash:   [20]byte(dataBuf[ProtocolNumber+8 : ProtocolNumber+28]),
-		PeerId:     [20]byte(dataBuf[ProtocolNumber+28 : ProtocolNumber+48]),
-	}, nil
-}
-
 func AcceptConnection(conn net.Conn, torrent types.TorrentFile, peerId string) (types.Peer, error) {
 	peer, err := acceptHandshake(conn)
 	if err != nil {
@@ -113,7 +52,7 @@ func InitiateConnection(conn net.Conn, torrent types.TorrentFile, peerId string)
 }
 
 func acceptHandshake(conn net.Conn) (types.Peer, error) {
-	inHandshake, err := DeserializeHandshake(conn)
+	inHandshake, err := deserializeHandshake(conn)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
@@ -131,7 +70,7 @@ func acceptHandshake(conn net.Conn) (types.Peer, error) {
 
 func sendHandshake(conn net.Conn, peerId string, infoHash [20]byte) error {
 	outHandshake := HandshakeData{Extensions: [8]byte{}, InfoHash: infoHash, PeerId: [20]byte([]byte(peerId))}
-	outHandshakeBytes, err := SerializeHandshake(outHandshake)
+	outHandshakeBytes, err := serializeHandshake(outHandshake)
 	if err != nil {
 		return fmt.Errorf("error serializing handshake, err=%s", err)
 	}
@@ -142,6 +81,67 @@ func sendHandshake(conn net.Conn, peerId string, infoHash [20]byte) error {
 	}
 
 	return nil
+}
+
+func serializeHandshake(data HandshakeData) ([]byte, error) {
+	buf := make([]byte, 0, 68)
+	buffer := bytes.NewBuffer(buf)
+
+	err := buffer.WriteByte(byte(ProtocolNumber))
+	if err != nil {
+		return []byte{}, fmt.Errorf("error while writing into buffer, err=%s", err)
+	}
+
+	n, err := buffer.WriteString(ProtocolString)
+	if err != nil || n != ProtocolNumber {
+		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
+	}
+
+	n, err = buffer.Write(data.Extensions[:])
+	if err != nil || n != 8 {
+		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
+	}
+
+	n, err = buffer.Write(data.InfoHash[:])
+	if err != nil || n != len(data.InfoHash) {
+		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
+	}
+
+	n, err = buffer.Write(data.PeerId[:])
+	if err != nil || n != len(data.PeerId) {
+		return []byte{}, fmt.Errorf("error while writing into buffer, len=%d, err=%s", n, err)
+	}
+
+	return buffer.Bytes(), nil
+}
+
+func deserializeHandshake(reader io.Reader) (HandshakeData, error) {
+	lenBuf := make([]byte, 1)
+	n, err := io.ReadFull(reader, lenBuf)
+	if err != nil {
+		return HandshakeData{}, fmt.Errorf("handshake first byte read failed, len=%d, err=%s", n, err)
+	}
+
+	len := int(lenBuf[0])
+	if len != ProtocolNumber {
+		return HandshakeData{}, fmt.Errorf("handshake is not the BitTorrent protocol, first byte: %d", len)
+	}
+
+	dataBuf := make([]byte, ProtocolNumber+ProtocolLength)
+	n, err = io.ReadFull(reader, dataBuf)
+	if err != nil {
+		return HandshakeData{}, fmt.Errorf("hanshake data read failed, len=%d, err=%s", n, err)
+	}
+
+	if string(dataBuf[0:ProtocolNumber]) != ProtocolString {
+		return HandshakeData{}, fmt.Errorf("hanshake does not contain the correct string, string=%s", string(dataBuf[0:20]))
+	}
+
+	return HandshakeData{
+		Extensions: [8]byte(dataBuf[ProtocolNumber : ProtocolNumber+8]),
+		InfoHash:   [20]byte(dataBuf[ProtocolNumber+8 : ProtocolNumber+28]),
+		PeerId:     [20]byte(dataBuf[ProtocolNumber+28 : ProtocolNumber+48]),
+	}, nil
 }
 
 const (
