@@ -267,7 +267,7 @@ func sendInterested(peer *types.Peer, conn net.Conn) {
 func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 	numberToSend := PipelineLength - len(progress.requests)
 	for i := 0; i < numberToSend; i++ {
-		if progress.nextToRequest > progress.order.length {
+		if progress.nextToRequest >= progress.order.length {
 			break
 		}
 
