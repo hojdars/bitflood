@@ -37,3 +37,9 @@ type Peer struct {
 	ID             string
 	Addr           net.Addr
 }
+
+type PieceOrder struct {
+	Index  int
+	Length int
+	Hash   [20]byte
+}
