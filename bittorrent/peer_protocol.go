@@ -5,6 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
+
+	"github.com/hojdars/bitflood/types"
 )
 
 const ProtocolNumber int = 19
@@ -77,6 +80,68 @@ func DeserializeHandshake(reader io.Reader) (HandshakeData, error) {
 		InfoHash:   [20]byte(dataBuf[ProtocolNumber+8 : ProtocolNumber+28]),
 		PeerId:     [20]byte(dataBuf[ProtocolNumber+28 : ProtocolNumber+48]),
 	}, nil
+}
+
+func AcceptConnection(conn net.Conn, torrent types.TorrentFile, peerId string) (types.Peer, error) {
+	peer, err := acceptHandshake(conn)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+
+	err = sendHandshake(conn, peer.ID, torrent.InfoHash)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error while sending handshake to target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+
+	// TODO: Send bitfield
+
+	return peer, nil
+}
+
+func InitiateConnection(conn net.Conn, torrent types.TorrentFile, peerId string) (types.Peer, error) {
+	err := sendHandshake(conn, peerId, torrent.InfoHash)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error while sending handshake to target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+
+	peer, err := acceptHandshake(conn)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+
+	return peer, nil
+}
+
+func acceptHandshake(conn net.Conn) (types.Peer, error) {
+	inHandshake, err := DeserializeHandshake(conn)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+
+	return types.Peer{
+		Downloaded:     0,
+		ChokedBy:       true,
+		Choking:        true,
+		Interested:     false,
+		InterestedSent: false,
+		ID:             string(inHandshake.PeerId[:]),
+		Addr:           conn.RemoteAddr(),
+	}, nil
+}
+
+func sendHandshake(conn net.Conn, peerId string, infoHash [20]byte) error {
+	outHandshake := HandshakeData{Extensions: [8]byte{}, InfoHash: infoHash, PeerId: [20]byte([]byte(peerId))}
+	outHandshakeBytes, err := SerializeHandshake(outHandshake)
+	if err != nil {
+		return fmt.Errorf("error serializing handshake, err=%s", err)
+	}
+
+	_, err = conn.Write(outHandshakeBytes)
+	if err != nil {
+		return fmt.Errorf("error sending handshake over TCP, err=%s", err)
+	}
+
+	return nil
 }
 
 const (
