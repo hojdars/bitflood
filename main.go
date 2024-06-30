@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"net"
@@ -131,7 +133,28 @@ func seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 			fillRequests(peer, conn, &progress)
 		}
 
-		// [MVP] TODO: if pieceProgress is 100%, we have a result -> verify hash, send 'have' message and send through results channel
+		// if pieceProgress is 100%, we have a result -> verify hash, send 'have' message and send through results channel
+		if progress.order != nil && progress.numDone == progress.order.length {
+			log.Printf("SEED  [%s]: piece %d download complete", peer.ID, progress.order.index)
+			hash := sha1.Sum(progress.buf)
+			if !bytes.Equal(hash[:], progress.order.hash[:]) {
+				log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, progress.order.index)
+				workQueue <- progress.order
+			} else {
+				log.Printf("SEED  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.index)
+				// TODO: resultQueue <- progres
+				peer.Downloaded += uint32(progress.numDone)
+			}
+
+			// progress is reset
+			progress = pieceProgress{
+				order:         nil,
+				buf:           nil,
+				numDone:       0,
+				requests:      nil,
+				nextToRequest: 0,
+			}
+		}
 
 		// after this is done, block on context.Done or message incoming
 		select {

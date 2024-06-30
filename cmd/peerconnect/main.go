@@ -9,7 +9,7 @@ import (
 	"github.com/hojdars/bitflood/bittorrent"
 )
 
-const BitFieldLength = 315
+const BitFieldLength = 316
 const TargetPort = 6881
 
 func main() {
