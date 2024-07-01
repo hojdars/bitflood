@@ -17,7 +17,7 @@ import (
 const PipelineLength int = 5
 const ChunkSize int = 1 << 14
 
-func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
+func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.Piece) {
 	log.Printf("INFO: started seeding to target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -31,7 +31,7 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	communicationLoop(ctx, conn, torrent, &peer, workQueue, results)
 }
 
-func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
+func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.Piece) {
 	log.Printf("INFO: started leeching from target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -45,7 +45,7 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerI
 	communicationLoop(ctx, conn, torrent, &peer, workQueue, results)
 }
 
-func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
+func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.Piece) {
 	msgChannel := make(chan bittorrent.PeerMessage)
 
 	// goroutine to accept incoming messages from TCP
@@ -194,7 +194,7 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 	}
 }
 
-func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.PieceResult) error {
+func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.Piece) error {
 	log.Printf("INFO  [%s]: piece %d download complete", peer.ID, progress.order.Index)
 	hash := sha1.Sum(progress.buf)
 	if !bytes.Equal(hash[:], progress.order.Hash[:]) {
@@ -222,7 +222,7 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 	}
 
 	log.Printf("INFO  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.Index)
-	results <- &types.PieceResult{
+	results <- &types.Piece{
 		Index:  progress.order.Index,
 		Data:   progress.buf,
 		Length: progress.order.Length,

@@ -1,6 +1,9 @@
 package types
 
 import (
+	"encoding/binary"
+	"fmt"
+	"io"
 	"net"
 
 	"github.com/hojdars/bitflood/bitfield"
@@ -44,8 +47,35 @@ type PieceOrder struct {
 	Hash   [20]byte
 }
 
-type PieceResult struct {
+type Piece struct {
 	Index  int
-	Data   []byte
 	Length int
+	Data   []byte
+}
+
+func (p Piece) Serialize() []byte {
+	result := make([]byte, 8, 4+4+p.Length)
+	binary.BigEndian.PutUint32(result[0:4], uint32(p.Index))
+	binary.BigEndian.PutUint32(result[4:8], uint32(p.Length))
+	result = append(result, p.Data...)
+	return result
+}
+
+func (p *Piece) Deserialize(reader io.Reader) error {
+	buf := make([]byte, 8)
+	_, err := reader.Read(buf)
+	if err != nil {
+		return fmt.Errorf("error deserializing piece, err=%s", err)
+	}
+
+	p.Index = int(binary.BigEndian.Uint32(buf[0:4]))
+	p.Length = int(binary.BigEndian.Uint32(buf[4:8]))
+	p.Data = make([]byte, p.Length)
+
+	_, err = reader.Read(p.Data)
+	if err != nil {
+		return fmt.Errorf("error deserializing piece, err=%s", err)
+	}
+
+	return nil
 }

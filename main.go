@@ -19,7 +19,7 @@ import (
 
 const Port int = 6881
 
-func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
+func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.Piece) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
 	if err != nil {
 		log.Fatalf("encountered error listening on port=%d, error=%s", Port, err)
@@ -35,7 +35,7 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId str
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, peerInfo types.PeerInformation, peerIndex int, results chan *types.PieceResult) error {
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, peerInfo types.PeerInformation, peerIndex int, results chan *types.Piece) error {
 	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
 	log.Printf("connecting to %s", peerAddr)
 
@@ -48,6 +48,35 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId strin
 	}
 
 	go client.Leech(ctx, conn, torrent, peerId, workQueue, results)
+
+	return nil
+}
+
+func savePartialFiles(torrent types.TorrentFile, results []*types.Piece) error {
+	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
+	files := make([]*os.File, fileNumber)
+	for i := 0; i < fileNumber; i += 1 {
+		index := i / 1000
+		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], index)
+		fp, err := os.Create(filename)
+		if err != nil {
+			return fmt.Errorf("error while opening file=%s, err=%s", filename, err)
+		}
+		files[index] = fp
+	}
+
+	for _, piece := range results {
+		if piece == nil {
+			continue
+		}
+
+		fileIndex := piece.Index / 1000
+		bytes := piece.Serialize()
+		_, err := files[fileIndex].Write(bytes)
+		if err != nil {
+			return fmt.Errorf("error while writing piece id=%d, err=%s", piece.Index, err)
+		}
+	}
 
 	return nil
 }
@@ -82,7 +111,7 @@ func main() {
 
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
-	// TODO [MVP]: Load the files, verify all pieces hashes
+	// TODO [MVP]: Load the file or PartialFiles, verify all pieces hashes, create BitField
 
 	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
@@ -99,8 +128,8 @@ func main() {
 
 	mainCtx, cancel := context.WithCancel(context.Background())
 
-	resultChannel := make(chan *types.PieceResult, len(torrent.PieceHashes))
-	results := make([]*types.PieceResult, len(torrent.PieceHashes))
+	resultChannel := make(chan *types.Piece, len(torrent.PieceHashes))
+	results := make([]*types.Piece, len(torrent.PieceHashes))
 	piecesDone := 0
 
 	go listeningServer(mainCtx, &torrent, peerId, workQueue, resultChannel)
@@ -136,7 +165,14 @@ func main() {
 	}
 
 	log.Printf("saving %d pieces", piecesDone)
-	// TODO [MVP]: Save the file
+	if piecesDone != len(torrent.PieceHashes) {
+		err := savePartialFiles(torrent, results)
+		if err != nil {
+			log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
+		}
+	} else {
+		// TODO [MVP]: If file is complete, write the complete file and not PartialFile
+	}
 
 	os.Exit(0)
 }
