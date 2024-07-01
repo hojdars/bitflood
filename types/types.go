@@ -43,3 +43,9 @@ type PieceOrder struct {
 	Length int
 	Hash   [20]byte
 }
+
+type PieceResult struct {
+	Index  int
+	Data   []byte
+	Length int
+}

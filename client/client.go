@@ -17,7 +17,7 @@ import (
 const PipelineLength int = 5
 const ChunkSize int = 1 << 14
 
-func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder) {
+func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
 	log.Printf("INFO: started seeding to target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -28,10 +28,10 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	}
 
 	log.Printf("INFO  [%s]: handshake complete", peer.ID)
-	communicationLoop(ctx, conn, torrent, &peer, workQueue)
+	communicationLoop(ctx, conn, torrent, &peer, workQueue, results)
 }
 
-func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder) {
+func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
 	log.Printf("INFO: started leeching from target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -42,10 +42,10 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerI
 	}
 
 	log.Printf("INFO [%s]: handshake complete", peer.ID)
-	communicationLoop(ctx, conn, torrent, &peer, workQueue)
+	communicationLoop(ctx, conn, torrent, &peer, workQueue, results)
 }
 
-func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, workQueue chan *types.PieceOrder) {
+func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
 	msgChannel := make(chan bittorrent.PeerMessage)
 
 	// goroutine to accept incoming messages from TCP
@@ -72,7 +72,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// check if we have a complete piece -> verify hash, send 'have' message and send through results channel
 		if progress.order != nil && progress.numDone == progress.order.Length {
-			err := handlePieceComplete(conn, &progress, peer, workQueue)
+			err := handlePieceComplete(conn, &progress, peer, workQueue, results)
 			if err != nil {
 				log.Printf("ERROR [%s]: error while handling a completed piece, err=%s", peer.ID, err)
 			} else {
@@ -194,7 +194,7 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 	}
 }
 
-func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, workQueue chan *types.PieceOrder) error {
+func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.PieceResult) error {
 	log.Printf("INFO  [%s]: piece %d download complete", peer.ID, progress.order.Index)
 	hash := sha1.Sum(progress.buf)
 	if !bytes.Equal(hash[:], progress.order.Hash[:]) {
@@ -222,7 +222,11 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 	}
 
 	log.Printf("INFO  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.Index)
-	// TODO [MVP]: resultQueue <- progres
+	results <- &types.PieceResult{
+		Index:  progress.order.Index,
+		Data:   progress.buf,
+		Length: progress.order.Length,
+	}
 	peer.Downloaded += uint32(progress.numDone)
 
 	return nil

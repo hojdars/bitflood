@@ -19,7 +19,7 @@ import (
 
 const Port int = 6881
 
-func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder) {
+func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.PieceResult) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
 	if err != nil {
 		log.Fatalf("encountered error listening on port=%d, error=%s", Port, err)
@@ -31,11 +31,11 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId str
 			log.Printf("ERROR: accept failed")
 		}
 
-		go client.Seed(ctx, conn, torrent, peerId, workQueue)
+		go client.Seed(ctx, conn, torrent, peerId, workQueue, results)
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, peerInfo types.PeerInformation, peerIndex int) error {
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, peerInfo types.PeerInformation, peerIndex int, results chan *types.PieceResult) error {
 	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
 	log.Printf("connecting to %s", peerAddr)
 
@@ -47,7 +47,7 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId strin
 		return fmt.Errorf("connection to peer=%s failed, err=%s", peerAddr, err)
 	}
 
-	go client.Leech(ctx, conn, torrent, peerId, workQueue)
+	go client.Leech(ctx, conn, torrent, peerId, workQueue, results)
 
 	return nil
 }
@@ -82,6 +82,8 @@ func main() {
 
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
+	// TODO [MVP]: Load the files, verify all pieces hashes
+
 	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
 		log.Fatalf("encountered an error while retrieving peers from tracker, err=%s", err)
@@ -96,13 +98,18 @@ func main() {
 	workQueue <- p
 
 	mainCtx, cancel := context.WithCancel(context.Background())
-	go listeningServer(mainCtx, &torrent, peerId, workQueue)
+
+	resultChannel := make(chan *types.PieceResult, len(torrent.PieceHashes))
+	results := make([]*types.PieceResult, len(torrent.PieceHashes))
+	piecesDone := 0
+
+	go listeningServer(mainCtx, &torrent, peerId, workQueue, resultChannel)
 
 	// WIP: start one thread
-	err = connectToPeer(mainCtx, &torrent, peerId, workQueue, peerInfo, 0)
+	err = connectToPeer(mainCtx, &torrent, peerId, workQueue, peerInfo, 0, resultChannel)
 	for i := 1; err != nil; i += 1 {
 		log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i-1], err)
-		err = connectToPeer(mainCtx, &torrent, peerId, workQueue, peerInfo, i)
+		err = connectToPeer(mainCtx, &torrent, peerId, workQueue, peerInfo, i, resultChannel)
 	}
 
 	signalChannel := make(chan os.Signal, 2)
@@ -116,14 +123,20 @@ func main() {
 			log.Printf("SIGINT caught, terminating")
 			cancel()
 			time.Sleep(time.Second)
-			// TODO [MVP]: save everything we have to disk by implementing 'pieceResult' which the downloaders send back
 			exit = true
+		case piece := <-resultChannel:
+			results[piece.Index] = piece
+			piecesDone += 1
+			log.Printf("downloaded %d/%d pieces, %f%%", piecesDone, len(torrent.PieceHashes), float32(piecesDone)/float32(len(torrent.PieceHashes)))
 		}
 
 		if exit {
 			break
 		}
 	}
+
+	log.Printf("saving %d pieces", piecesDone)
+	// TODO [MVP]: Save the file
 
 	os.Exit(0)
 }
