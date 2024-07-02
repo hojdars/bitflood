@@ -56,13 +56,12 @@ func savePartialFiles(torrent types.TorrentFile, results []*types.Piece) error {
 	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
 	files := make([]*os.File, fileNumber)
 	for i := 0; i < fileNumber; i += 1 {
-		index := i / 1000
-		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], index)
+		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
 		fp, err := os.Create(filename)
 		if err != nil {
 			return fmt.Errorf("error while opening file=%s, err=%s", filename, err)
 		}
-		files[index] = fp
+		files[i] = fp
 	}
 
 	for _, piece := range results {
