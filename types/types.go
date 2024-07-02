@@ -63,8 +63,10 @@ func (p Piece) Serialize() []byte {
 
 func (p *Piece) Deserialize(reader io.Reader) error {
 	buf := make([]byte, 8)
-	_, err := reader.Read(buf)
-	if err != nil {
+	_, err := io.ReadFull(reader, buf)
+	if err == io.EOF {
+		return err
+	} else if err != nil {
 		return fmt.Errorf("error deserializing piece, err=%s", err)
 	}
 
@@ -74,7 +76,7 @@ func (p *Piece) Deserialize(reader io.Reader) error {
 
 	_, err = reader.Read(p.Data)
 	if err != nil {
-		return fmt.Errorf("error deserializing piece, err=%s", err)
+		return fmt.Errorf("error deserializing piece's data, err=%s", err)
 	}
 
 	return nil

@@ -4,12 +4,26 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/types"
 )
 
-func ReadPartialFile(reader io.Reader) ([]types.Piece, error) {
-	// [MVP] TODO: implement
-	return []types.Piece{}, nil
+func ReadPartialFile(reader io.Reader, bitfield *bitfield.Bitfield) ([]types.Piece, error) {
+	result := make([]types.Piece, 0)
+	for {
+		var piece types.Piece
+		err := piece.Deserialize(reader)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return []types.Piece{}, fmt.Errorf("error while loading PartialFile, err=%s", err)
+		}
+
+		result = append(result, piece)
+		bitfield.Set(piece.Index, true)
+	}
+
+	return result, nil
 }
 
 func WritePartialFile(data []*types.Piece, writer io.Writer) error {
