@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"net"
@@ -11,9 +12,11 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/bittorrent"
 	"github.com/hojdars/bitflood/client"
 	"github.com/hojdars/bitflood/decode"
+	"github.com/hojdars/bitflood/file"
 	"github.com/hojdars/bitflood/types"
 )
 
@@ -80,6 +83,48 @@ func savePartialFiles(torrent types.TorrentFile, results []*types.Piece) error {
 	return nil
 }
 
+func loadPiecesFromPartialFiles(torrent types.TorrentFile, pieces []*types.Piece, resultBitfield *bitfield.Bitfield) (int, error) {
+	numberOfPieces := 0
+	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
+	for i := 0; i < fileNumber; i += 1 {
+		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
+		numberOfPiecesInFile := 0
+
+		if _, err := os.Stat(filename); err != nil {
+			continue
+		}
+
+		pfile, err := os.Open(filename)
+		if err != nil {
+			return numberOfPieces, fmt.Errorf("cannot open file=%s, err=%s", filename, err)
+		}
+
+		res, err := file.ReadPartialFile(pfile, resultBitfield)
+		if err != nil {
+			return numberOfPieces, fmt.Errorf("error while reading partial file, name=%s, err=%s", filename, err)
+		}
+
+		for _, p := range res {
+			hash := sha1.Sum(p.Data)
+			if hash != torrent.PieceHashes[p.Index] {
+				return numberOfPieces, fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
+			}
+			loadedPiece := p
+			pieces[loadedPiece.Index] = &loadedPiece
+			numberOfPieces += 1
+			numberOfPiecesInFile += 1
+			err := resultBitfield.Set(loadedPiece.Index, true)
+			if err != nil {
+				return numberOfPieces, fmt.Errorf("error setting true for bit %d, err=%s", p.Index, err)
+			}
+			log.Printf("loaded piece index=%d", loadedPiece.Index)
+		}
+
+		log.Printf("loaded %d pieces from file %s", numberOfPiecesInFile, filename)
+	}
+	return numberOfPieces, nil
+}
+
 func main() {
 	if len(os.Args) != 2 {
 		log.Fatalf("invalid number of arguments, expected 2, got %v", len(os.Args))
@@ -110,7 +155,13 @@ func main() {
 
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
-	// TODO [MVP]: Load the file or PartialFiles, verify all pieces hashes, create BitField
+	// load the file or PartialFiles, verify all pieces hashes, create BitField
+	results := make([]*types.Piece, len(torrent.PieceHashes))
+	resultBitfield := bitfield.New(len(torrent.PieceHashes))
+	piecesDone, err := loadPiecesFromPartialFiles(torrent, results, &resultBitfield)
+	if err != nil {
+		log.Fatalf("encountered an error while reading partial files, err=%s", err)
+	}
 
 	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
@@ -118,18 +169,24 @@ func main() {
 	}
 	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(peerInfo.IPs), peerInfo.Interval)
 
-	workQueue := make(chan *types.PieceOrder, len(torrent.PieceHashes))
 	// TODO [MVP]: fill 'workQueue' with each piece
-	p := &types.PieceOrder{Index: 0, Length: torrent.PieceLength, Hash: torrent.PieceHashes[0]}
-	workQueue <- p
-	p = &types.PieceOrder{Index: 1, Length: torrent.PieceLength, Hash: torrent.PieceHashes[1]}
-	workQueue <- p
+	workQueue := make(chan *types.PieceOrder, len(torrent.PieceHashes))
+	requests := []int{0, 1, 1001, 1003, 2005, 2024}
+	for _, r := range requests {
+		have, err := resultBitfield.Get(r)
+		if err != nil {
+			log.Fatalf("encountered error while checking bitfield, err=%s", err)
+		}
+		if have {
+			continue
+		}
+		p := &types.PieceOrder{Index: r, Length: torrent.PieceLength, Hash: torrent.PieceHashes[r]}
+		workQueue <- p
+	}
 
 	mainCtx, cancel := context.WithCancel(context.Background())
 
 	resultChannel := make(chan *types.Piece, len(torrent.PieceHashes))
-	results := make([]*types.Piece, len(torrent.PieceHashes))
-	piecesDone := 0
 
 	go listeningServer(mainCtx, &torrent, peerId, workQueue, resultChannel)
 

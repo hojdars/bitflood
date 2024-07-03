@@ -42,12 +42,11 @@ func main() {
 
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
-	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
-
 	numberOfPieces := 0
 	results := make([]*types.Piece, len(torrent.PieceHashes))
 	resultBitfield := bitfield.New(len(torrent.PieceHashes))
 
+	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
 	for i := 0; i < fileNumber; i += 1 {
 		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
 		numberOfPiecesInFile := 0
