@@ -16,6 +16,14 @@ func FromBytes(bytes []byte, length int) Bitfield {
 	return Bitfield{Length: length, data: bytes}
 }
 
+func Copy(in *Bitfield) Bitfield {
+	result := Bitfield{}
+	result.Length = in.Length
+	result.data = make([]byte, len(in.data))
+	copy(result.data, in.data)
+	return result
+}
+
 func (field *Bitfield) Get(index int) (bool, error) {
 	if index >= field.Length {
 		return false, fmt.Errorf("Get: index out of bounds, index=%d, bitfield length=%d", index, field.Length)

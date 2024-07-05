@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -55,26 +56,33 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId strin
 	return nil
 }
 
-func savePartialFiles(torrent types.TorrentFile, results []*types.Piece) error {
+func savePartialFiles(torrent types.TorrentFile, results *Results, savedPieces *bitfield.Bitfield) error {
 	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
 	files := make([]*os.File, fileNumber)
 	for i := 0; i < fileNumber; i += 1 {
 		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
-		fp, err := os.Create(filename)
+		fp, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 		if err != nil {
 			return fmt.Errorf("error while opening file=%s, err=%s", filename, err)
 		}
 		files[i] = fp
 	}
 
-	for _, piece := range results {
+	for _, piece := range results.pieces {
 		if piece == nil {
+			continue
+		}
+		alreadySaved, err := savedPieces.Get(piece.Index)
+		if err != nil {
+			return fmt.Errorf("error while verifying piece index in bitfield, err=%s", err)
+		}
+		if alreadySaved {
 			continue
 		}
 
 		fileIndex := piece.Index / 1000
 		bytes := piece.Serialize()
-		_, err := files[fileIndex].Write(bytes)
+		_, err = files[fileIndex].Write(bytes)
 		if err != nil {
 			return fmt.Errorf("error while writing piece id=%d, err=%s", piece.Index, err)
 		}
@@ -83,8 +91,11 @@ func savePartialFiles(torrent types.TorrentFile, results []*types.Piece) error {
 	return nil
 }
 
-func loadPiecesFromPartialFiles(torrent types.TorrentFile, pieces []*types.Piece, resultBitfield *bitfield.Bitfield) (int, error) {
-	numberOfPieces := 0
+func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *Results) error {
+	results.lock.Lock()
+	defer results.lock.Unlock()
+
+	results.piecesDone = 0
 	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
 	for i := 0; i < fileNumber; i += 1 {
 		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
@@ -96,33 +107,39 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, pieces []*types.Piece
 
 		pfile, err := os.Open(filename)
 		if err != nil {
-			return numberOfPieces, fmt.Errorf("cannot open file=%s, err=%s", filename, err)
+			return fmt.Errorf("cannot open file=%s, err=%s", filename, err)
 		}
 
-		res, err := file.ReadPartialFile(pfile, resultBitfield)
+		res, err := file.ReadPartialFile(pfile, &results.bitfield)
 		if err != nil {
-			return numberOfPieces, fmt.Errorf("error while reading partial file, name=%s, err=%s", filename, err)
+			return fmt.Errorf("error while reading partial file, name=%s, err=%s", filename, err)
 		}
 
 		for _, p := range res {
 			hash := sha1.Sum(p.Data)
 			if hash != torrent.PieceHashes[p.Index] {
-				return numberOfPieces, fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
+				return fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
 			}
 			loadedPiece := p
-			pieces[loadedPiece.Index] = &loadedPiece
-			numberOfPieces += 1
+			results.pieces[loadedPiece.Index] = &loadedPiece
+			results.piecesDone += 1
 			numberOfPiecesInFile += 1
-			err := resultBitfield.Set(loadedPiece.Index, true)
+			err := results.bitfield.Set(loadedPiece.Index, true)
 			if err != nil {
-				return numberOfPieces, fmt.Errorf("error setting true for bit %d, err=%s", p.Index, err)
+				return fmt.Errorf("error setting true for bit %d, err=%s", p.Index, err)
 			}
-			log.Printf("loaded piece index=%d", loadedPiece.Index)
 		}
 
 		log.Printf("loaded %d pieces from file %s", numberOfPiecesInFile, filename)
 	}
-	return numberOfPieces, nil
+	return nil
+}
+
+type Results struct {
+	pieces     []*types.Piece
+	piecesDone int
+	bitfield   bitfield.Bitfield
+	lock       sync.RWMutex
 }
 
 func main() {
@@ -156,12 +173,12 @@ func main() {
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
 	// load the file or PartialFiles, verify all pieces hashes, create BitField
-	results := make([]*types.Piece, len(torrent.PieceHashes))
-	resultBitfield := bitfield.New(len(torrent.PieceHashes))
-	piecesDone, err := loadPiecesFromPartialFiles(torrent, results, &resultBitfield)
+	results := Results{pieces: make([]*types.Piece, len(torrent.PieceHashes)), bitfield: bitfield.New(len(torrent.PieceHashes)), lock: sync.RWMutex{}}
+	err = loadPiecesFromPartialFiles(torrent, &results)
 	if err != nil {
 		log.Fatalf("encountered an error while reading partial files, err=%s", err)
 	}
+	savedPieces := bitfield.Copy(&results.bitfield)
 
 	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
@@ -173,7 +190,7 @@ func main() {
 	workQueue := make(chan *types.PieceOrder, len(torrent.PieceHashes))
 	requests := []int{0, 1, 1001, 1003, 2005, 2024}
 	for _, r := range requests {
-		have, err := resultBitfield.Get(r)
+		have, err := results.bitfield.Get(r)
 		if err != nil {
 			log.Fatalf("encountered error while checking bitfield, err=%s", err)
 		}
@@ -210,9 +227,15 @@ func main() {
 			time.Sleep(time.Second)
 			exit = true
 		case piece := <-resultChannel:
-			results[piece.Index] = piece
-			piecesDone += 1
-			log.Printf("downloaded %d/%d pieces, %f%%", piecesDone, len(torrent.PieceHashes), float32(piecesDone)/float32(len(torrent.PieceHashes)))
+			results.lock.Lock()
+			results.pieces[piece.Index] = piece
+			results.piecesDone += 1
+			err := results.bitfield.Set(piece.Index, true)
+			results.lock.Unlock()
+			if err != nil {
+				log.Fatalf("ERROR: encountered an error while setting a bit in bitfield to true, index=%d, err=%s", piece.Index, err)
+			}
+			log.Printf("downloaded %d/%d pieces, %f%%", results.piecesDone, len(torrent.PieceHashes), float32(results.piecesDone)/float32(len(torrent.PieceHashes)))
 		}
 
 		if exit {
@@ -220,9 +243,9 @@ func main() {
 		}
 	}
 
-	log.Printf("saving %d pieces", piecesDone)
-	if piecesDone != len(torrent.PieceHashes) {
-		err := savePartialFiles(torrent, results)
+	log.Printf("saving %d pieces", results.piecesDone)
+	if results.piecesDone != len(torrent.PieceHashes) {
+		err := savePartialFiles(torrent, &results, &savedPieces)
 		if err != nil {
 			log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
 		}
