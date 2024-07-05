@@ -1,6 +1,6 @@
 module github.com/hojdars/bitflood
 
-go 1.21.4
+go 1.22
 
 require github.com/jackpal/bencode-go v1.0.2
 
