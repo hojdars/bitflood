@@ -37,7 +37,7 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerI
 
 	peer, err := bittorrent.InitiateConnection(conn, *torrent, peerId)
 	if err != nil {
-		log.Printf("ERROR: error initiating bittorrent connection to target=%s", conn.RemoteAddr().String())
+		log.Printf("ERROR: error initiating bittorrent connection to target=%s, err=%s", conn.RemoteAddr().String(), err)
 		return
 	}
 
@@ -93,6 +93,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// if we are interested but choked, send 'interested'
 		if progress.order != nil && peer.ChokedBy && !peer.InterestedSent {
 			sendInterested(peer, conn)
+			log.Printf("INFO [%s]: sent interested message", peer.ID)
 		}
 
 		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), send the requests
