@@ -23,7 +23,7 @@ import (
 
 const Port int = 6881
 
-func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication) {
+func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
 	if err != nil {
 		log.Fatalf("encountered error listening on port=%d, error=%s", Port, err)
@@ -35,11 +35,11 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 			log.Printf("ERROR: accept failed")
 		}
 
-		go client.Seed(ctx, conn, torrent, comms)
+		go client.Seed(ctx, conn, torrent, comms, results)
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, peerInfo types.PeerInformation, peerIndex int) error {
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation, peerIndex int) error {
 	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
 	log.Printf("connecting to %s", peerAddr)
 
@@ -51,12 +51,12 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.
 		return fmt.Errorf("connection to peer=%s failed, err=%s", peerAddr, err)
 	}
 
-	go client.Leech(ctx, conn, torrent, comms)
+	go client.Leech(ctx, conn, torrent, comms, results)
 
 	return nil
 }
 
-func savePartialFiles(torrent types.TorrentFile, results *Results, savedPieces *bitfield.Bitfield) error {
+func savePartialFiles(torrent types.TorrentFile, results *types.Results, savedPieces *bitfield.Bitfield) error {
 	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
 	files := make([]*os.File, fileNumber)
 	for i := 0; i < fileNumber; i += 1 {
@@ -68,7 +68,7 @@ func savePartialFiles(torrent types.TorrentFile, results *Results, savedPieces *
 		files[i] = fp
 	}
 
-	for _, piece := range results.pieces {
+	for _, piece := range results.Pieces {
 		if piece == nil {
 			continue
 		}
@@ -91,11 +91,11 @@ func savePartialFiles(torrent types.TorrentFile, results *Results, savedPieces *
 	return nil
 }
 
-func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *Results) error {
-	results.lock.Lock()
-	defer results.lock.Unlock()
+func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *types.Results) error {
+	results.Lock.Lock()
+	defer results.Lock.Unlock()
 
-	results.piecesDone = 0
+	results.PiecesDone = 0
 	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
 	for i := 0; i < fileNumber; i += 1 {
 		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
@@ -110,7 +110,7 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *Results) err
 			return fmt.Errorf("cannot open file=%s, err=%s", filename, err)
 		}
 
-		res, err := file.ReadPartialFile(pfile, &results.bitfield)
+		res, err := file.ReadPartialFile(pfile, &results.Bitfield)
 		if err != nil {
 			return fmt.Errorf("error while reading partial file, name=%s, err=%s", filename, err)
 		}
@@ -121,10 +121,10 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *Results) err
 				return fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
 			}
 			loadedPiece := p
-			results.pieces[loadedPiece.Index] = &loadedPiece
-			results.piecesDone += 1
+			results.Pieces[loadedPiece.Index] = &loadedPiece
+			results.PiecesDone += 1
 			numberOfPiecesInFile += 1
-			err := results.bitfield.Set(loadedPiece.Index, true)
+			err := results.Bitfield.Set(loadedPiece.Index, true)
 			if err != nil {
 				return fmt.Errorf("error setting true for bit %d, err=%s", p.Index, err)
 			}
@@ -135,7 +135,7 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *Results) err
 	return nil
 }
 
-func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, peerInfo types.PeerInformation) {
+func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation) {
 	numberOfConnections := 0
 	peerCons := make(map[int]struct{})
 	for numberOfConnections < numberOfClients {
@@ -144,7 +144,7 @@ func launchClients(numberOfClients int, ctx context.Context, torrent *types.Torr
 		for {
 			_, ok := peerCons[i]
 			if !ok {
-				err = connectToPeer(ctx, torrent, comms, peerInfo, i)
+				err = connectToPeer(ctx, torrent, comms, results, peerInfo, i)
 			}
 			if err != nil {
 				log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i], err)
@@ -157,13 +157,6 @@ func launchClients(numberOfClients int, ctx context.Context, torrent *types.Torr
 		log.Printf("connected to peer number %d", i)
 		numberOfConnections += 1
 	}
-}
-
-type Results struct {
-	pieces     []*types.Piece
-	piecesDone int
-	bitfield   bitfield.Bitfield
-	lock       sync.RWMutex
 }
 
 func main() {
@@ -197,12 +190,12 @@ func main() {
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
 
 	// load the file or PartialFiles, verify all pieces hashes, create BitField
-	results := Results{pieces: make([]*types.Piece, len(torrent.PieceHashes)), bitfield: bitfield.New(len(torrent.PieceHashes)), lock: sync.RWMutex{}}
+	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
 	err = loadPiecesFromPartialFiles(torrent, &results)
 	if err != nil {
 		log.Fatalf("encountered an error while reading partial files, err=%s", err)
 	}
-	savedPieces := bitfield.Copy(&results.bitfield)
+	savedPieces := bitfield.Copy(&results.Bitfield)
 
 	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
 	if err != nil {
@@ -214,7 +207,7 @@ func main() {
 	comms := types.Communication{Orders: make(chan *types.PieceOrder, len(torrent.PieceHashes)), Results: make(chan *types.Piece, len(torrent.PieceHashes))}
 	requests := []int{0, 1, 1001, 1003, 2005, 2024}
 	for _, r := range requests {
-		have, err := results.bitfield.Get(r)
+		have, err := results.Bitfield.Get(r)
 		if err != nil {
 			log.Fatalf("encountered error while checking bitfield, err=%s", err)
 		}
@@ -227,9 +220,9 @@ func main() {
 
 	mainCtx, cancel := context.WithCancel(context.WithValue(context.Background(), "peer-id", peerId))
 
-	go listeningServer(mainCtx, &torrent, comms)
+	go listeningServer(mainCtx, &torrent, comms, &results)
 
-	launchClients(2, mainCtx, &torrent, comms, peerInfo)
+	launchClients(2, mainCtx, &torrent, comms, &results, peerInfo)
 
 	signalChannel := make(chan os.Signal, 2)
 	signal.Notify(signalChannel, os.Interrupt, syscall.SIGINT)
@@ -244,15 +237,15 @@ func main() {
 			time.Sleep(time.Second)
 			exit = true
 		case piece := <-comms.Results:
-			results.lock.Lock()
-			results.pieces[piece.Index] = piece
-			results.piecesDone += 1
-			err := results.bitfield.Set(piece.Index, true)
-			results.lock.Unlock()
+			results.Lock.Lock()
+			results.Pieces[piece.Index] = piece
+			results.PiecesDone += 1
+			err := results.Bitfield.Set(piece.Index, true)
+			results.Lock.Unlock()
 			if err != nil {
 				log.Fatalf("ERROR: encountered an error while setting a bit in bitfield to true, index=%d, err=%s", piece.Index, err)
 			}
-			log.Printf("downloaded %d/%d pieces, %f%%", results.piecesDone, len(torrent.PieceHashes), float32(results.piecesDone)/float32(len(torrent.PieceHashes)))
+			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
 		}
 
 		if exit {
@@ -260,8 +253,8 @@ func main() {
 		}
 	}
 
-	log.Printf("saving %d pieces", results.piecesDone)
-	if results.piecesDone != len(torrent.PieceHashes) {
+	log.Printf("saving %d pieces", results.PiecesDone)
+	if results.PiecesDone != len(torrent.PieceHashes) {
 		err := savePartialFiles(torrent, &results, &savedPieces)
 		if err != nil {
 			log.Printf("ERROR: encountered error while saving partial files, err=%s", err)

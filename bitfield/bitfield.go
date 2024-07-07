@@ -12,6 +12,12 @@ func New(length int) Bitfield {
 	return Bitfield{Length: length, data: make([]byte, lenBytes)}
 }
 
+func (field Bitfield) Bytes() (result []byte) {
+	result = make([]byte, len(field.data))
+	copy(result, field.data)
+	return
+}
+
 func FromBytes(bytes []byte, length int) Bitfield {
 	return Bitfield{Length: length, data: bytes}
 }

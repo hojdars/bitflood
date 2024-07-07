@@ -17,7 +17,7 @@ import (
 const PipelineLength int = 5
 const ChunkSize int = 1 << 14
 
-func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication) {
+func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
 	log.Printf("INFO: started seeding to target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -30,7 +30,7 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms 
 		log.Fatalf("ERROR: context does not contain a string")
 	}
 
-	peer, err := bittorrent.AcceptConnection(conn, *torrent, peerId)
+	peer, err := bittorrent.AcceptConnection(conn, *torrent, results, peerId)
 	if err != nil {
 		log.Printf("ERROR: error accepting bittorrent connection from target=%s", conn.RemoteAddr().String())
 		return
@@ -40,7 +40,7 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms 
 	communicationLoop(ctx, conn, torrent, &peer, comms)
 }
 
-func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication) {
+func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
 	log.Printf("INFO: started leeching from target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -53,7 +53,7 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms
 		log.Fatalf("ERROR: context does not contain a string")
 	}
 
-	peer, err := bittorrent.InitiateConnection(conn, *torrent, peerId)
+	peer, err := bittorrent.InitiateConnection(conn, *torrent, results, peerId)
 	if err != nil {
 		log.Printf("ERROR: error initiating bittorrent connection to target=%s, err=%s", conn.RemoteAddr().String(), err)
 		return
@@ -197,7 +197,7 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 
 		// craft the message
 		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
-		msg.SerializeRequestData(progress.order.Index, nextRequest.start, nextRequest.length)
+		msg.SerializeRequestMsg(progress.order.Index, nextRequest.start, nextRequest.length)
 
 		// send over TCP
 		// TODO: technically, we can create the requests in this thread and then launch goroutine to send them
@@ -286,7 +286,7 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		// TODO: Seeding-only, peer is requesting a piece
 		return nil
 	case bittorrent.MsgPiece:
-		index, begin, data, err := msg.DeserializePiece()
+		index, begin, data, err := msg.DeserializePieceMsg()
 		if err != nil {
 			return fmt.Errorf("error while parsing piece message, err=%s", err)
 		}

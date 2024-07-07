@@ -78,7 +78,7 @@ func receiveMessage(conn net.Conn, remotePeerId string) {
 
 	log.Printf("received message, code=%d", msg.Code)
 	if msg.Code == bittorrent.MsgRequest {
-		index, begin, len, err := msg.DeserializeRequest()
+		index, begin, len, err := msg.DeserializeRequestMsg()
 		if err != nil {
 			log.Printf("ERROR [%s]: error while deserializing request message from target=%s, err=%s", remotePeerId, conn.RemoteAddr().String(), err)
 		}

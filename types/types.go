@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 
 	"github.com/hojdars/bitflood/bitfield"
 )
@@ -85,4 +86,11 @@ func (p *Piece) Deserialize(reader io.Reader) error {
 	}
 
 	return nil
+}
+
+type Results struct {
+	Pieces     []*Piece
+	PiecesDone int
+	Bitfield   bitfield.Bitfield
+	Lock       sync.RWMutex
 }

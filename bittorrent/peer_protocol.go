@@ -21,7 +21,7 @@ type HandshakeData struct {
 	PeerId     [20]byte
 }
 
-func AcceptConnection(conn net.Conn, torrent types.TorrentFile, peerId string) (types.Peer, error) {
+func AcceptConnection(conn net.Conn, torrent types.TorrentFile, results *types.Results, peerId string) (types.Peer, error) {
 	peer, err := acceptHandshake(conn)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
@@ -32,12 +32,15 @@ func AcceptConnection(conn net.Conn, torrent types.TorrentFile, peerId string) (
 		return types.Peer{}, fmt.Errorf("error while sending handshake to target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
 
-	// TODO: Send bitfield
+	err = sendBitfield(conn, results)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error while sending bitfield to target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
 
 	return peer, nil
 }
 
-func InitiateConnection(conn net.Conn, torrent types.TorrentFile, peerId string) (types.Peer, error) {
+func InitiateConnection(conn net.Conn, torrent types.TorrentFile, results *types.Results, peerId string) (types.Peer, error) {
 	err := sendHandshake(conn, peerId, torrent.InfoHash)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error while sending handshake to target=%s, err=%s", conn.RemoteAddr().String(), err)
@@ -46,6 +49,11 @@ func InitiateConnection(conn net.Conn, torrent types.TorrentFile, peerId string)
 	peer, err := acceptHandshake(conn)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+
+	err = sendBitfield(conn, results)
+	if err != nil {
+		return types.Peer{}, fmt.Errorf("error while sending bitfield to target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
 
 	return peer, nil
@@ -144,6 +152,19 @@ func deserializeHandshake(reader io.Reader) (HandshakeData, error) {
 	}, nil
 }
 
+func sendBitfield(conn net.Conn, results *types.Results) error {
+	bitfieldMsg := PeerMessage{KeepAlive: false, Code: MsgBitfield, Data: results.Bitfield.Bytes()}
+	bfMsgBytes, err := SerializeMessage(bitfieldMsg)
+	if err != nil {
+		return fmt.Errorf("error while serializing bitfield message to target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+	_, err = conn.Write(bfMsgBytes)
+	if err != nil {
+		return fmt.Errorf("error while sending bitfield message to target=%s, err=%s", conn.RemoteAddr().String(), err)
+	}
+	return nil
+}
+
 const (
 	MsgChoke         byte = 0
 	MsgUnchoke       byte = 1
@@ -227,7 +248,7 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 	return PeerMessage{KeepAlive: false, Code: codeBuf[0], Data: dataBuf}, nil
 }
 
-func (msg PeerMessage) DeserializePiece() (index, begin int, piece []byte, err error) {
+func (msg PeerMessage) DeserializePieceMsg() (index, begin int, piece []byte, err error) {
 	if msg.Code != MsgPiece {
 		err = fmt.Errorf("cannot deserialize piece message on a non-piece message, msg-code=%d", msg.Code)
 		return
@@ -243,14 +264,14 @@ func (msg PeerMessage) DeserializePiece() (index, begin int, piece []byte, err e
 	return
 }
 
-func (msg *PeerMessage) SerializeRequestData(index, begin, length int) {
+func (msg *PeerMessage) SerializeRequestMsg(index, begin, length int) {
 	msg.Data = make([]byte, 12)
 	binary.BigEndian.PutUint32(msg.Data[0:4], uint32(index))
 	binary.BigEndian.PutUint32(msg.Data[4:8], uint32(begin))
 	binary.BigEndian.PutUint32(msg.Data[8:12], uint32(length))
 }
 
-func (msg PeerMessage) DeserializeRequest() (index, begin, length int, err error) {
+func (msg PeerMessage) DeserializeRequestMsg() (index, begin, length int, err error) {
 	if len(msg.Data) < 12 {
 		err = fmt.Errorf("message data too short, expected 12B, got %dB", len(msg.Data))
 		return
