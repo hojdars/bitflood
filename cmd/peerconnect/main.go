@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
+	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/bittorrent"
 	"github.com/hojdars/bitflood/types"
 )
@@ -28,7 +30,8 @@ func main() {
 	}
 	defer conn.Close()
 
-	peer, err := bittorrent.InitiateConnection(conn, torrent, peerId)
+	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
+	peer, err := bittorrent.InitiateConnection(conn, torrent, &results, peerId)
 	if err != nil {
 		log.Fatalf("handshake failed")
 	}

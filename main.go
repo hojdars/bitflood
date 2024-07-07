@@ -197,7 +197,7 @@ func main() {
 	}
 	savedPieces := bitfield.Copy(&results.Bitfield)
 
-	peerInfo, peerId, err := bittorrent.GetPeers(torrent, Port)
+	peerInfo, peerId, err := bittorrent.GetPeers(torrent, &results, Port)
 	if err != nil {
 		log.Fatalf("encountered an error while retrieving peers from tracker, err=%s", err)
 	}
