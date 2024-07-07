@@ -17,7 +17,7 @@ import (
 const PipelineLength int = 5
 const ChunkSize int = 1 << 14
 
-func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.Piece) {
+func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, comms types.Communication) {
 	log.Printf("INFO: started seeding to target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -28,10 +28,10 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	}
 
 	log.Printf("INFO  [%s]: handshake complete", peer.ID)
-	communicationLoop(ctx, conn, torrent, &peer, workQueue, results)
+	communicationLoop(ctx, conn, torrent, &peer, comms)
 }
 
-func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, workQueue chan *types.PieceOrder, results chan *types.Piece) {
+func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, comms types.Communication) {
 	log.Printf("INFO: started leeching from target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
 
@@ -42,10 +42,10 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerI
 	}
 
 	log.Printf("INFO [%s]: handshake complete", peer.ID)
-	communicationLoop(ctx, conn, torrent, &peer, workQueue, results)
+	communicationLoop(ctx, conn, torrent, &peer, comms)
 }
 
-func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.Piece) {
+func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, comms types.Communication) {
 	msgChannel := make(chan bittorrent.PeerMessage)
 
 	// goroutine to accept incoming messages from TCP
@@ -72,7 +72,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// check if we have a complete piece -> verify hash, send 'have' message and send through results channel
 		if progress.order != nil && progress.numDone == progress.order.Length {
-			err := handlePieceComplete(conn, &progress, peer, workQueue, results)
+			err := handlePieceComplete(conn, &progress, peer, comms)
 			if err != nil {
 				log.Printf("ERROR [%s]: error while handling a completed piece, err=%s", peer.ID, err)
 			} else {
@@ -83,7 +83,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// check if we should request a piece (only request if we have the bitfield)
 		if progress.order == nil && peer.Bitfield.Length == len(torrent.PieceHashes) {
-			progress.order = getPiece(*peer, workQueue)
+			progress.order = getPiece(*peer, comms.Orders)
 			if progress.order != nil {
 				log.Printf("INFO  [%s]: downloading piece index=%d", peer.ID, progress.order.Index)
 				progress.buf = make([]byte, progress.order.Length)
@@ -195,12 +195,12 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 	}
 }
 
-func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, workQueue chan *types.PieceOrder, results chan *types.Piece) error {
+func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, comms types.Communication) error {
 	log.Printf("INFO  [%s]: piece %d download complete", peer.ID, progress.order.Index)
 	hash := sha1.Sum(progress.buf)
 	if !bytes.Equal(hash[:], progress.order.Hash[:]) {
 		log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, progress.order.Index)
-		workQueue <- progress.order
+		comms.Orders <- progress.order
 		return nil
 	}
 
@@ -223,7 +223,7 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 	}
 
 	log.Printf("INFO  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.Index)
-	results <- &types.Piece{
+	comms.Results <- &types.Piece{
 		Index:  progress.order.Index,
 		Data:   progress.buf,
 		Length: progress.order.Length,

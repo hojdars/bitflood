@@ -53,6 +53,11 @@ type Piece struct {
 	Data   []byte
 }
 
+type Communication struct {
+	Orders  chan *PieceOrder
+	Results chan *Piece
+}
+
 func (p Piece) Serialize() []byte {
 	result := make([]byte, 8, 4+4+p.Length)
 	binary.BigEndian.PutUint32(result[0:4], uint32(p.Index))
