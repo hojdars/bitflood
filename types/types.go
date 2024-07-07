@@ -49,14 +49,18 @@ type PieceOrder struct {
 }
 
 type Piece struct {
-	Index  int
-	Length int
-	Data   []byte
+	Index            int
+	Length           int
+	Data             []byte
+	DownloadedFromId string
 }
 
 type Communication struct {
-	Orders  chan *PieceOrder
-	Results chan *Piece
+	Orders  chan *PieceOrder // main -> leech
+	Results chan *Piece      // leech -> main
+
+	InterestedPeers chan string   // seed -> main
+	PeersToUnchoke  chan []string // main -> seed
 }
 
 func (p Piece) Serialize() []byte {
