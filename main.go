@@ -21,6 +21,7 @@ import (
 	"github.com/hojdars/bitflood/types"
 )
 
+const ChokeAlgorithmTick int = 10
 const Port int = 6881
 
 func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
@@ -159,6 +160,26 @@ func launchClients(numberOfClients int, ctx context.Context, torrent *types.Torr
 	}
 }
 
+func launchTimers(chokeInterval, trackerInterval int) (chan struct{}, chan struct{}) {
+	chokeAlgCh := make(chan struct{})
+	go func() {
+		for {
+			time.Sleep(time.Second * time.Duration(chokeInterval))
+			chokeAlgCh <- struct{}{}
+		}
+	}()
+
+	trackerUpdateCh := make(chan struct{})
+	go func() {
+		for {
+			time.Sleep(time.Second * time.Duration(trackerInterval))
+			trackerUpdateCh <- struct{}{}
+		}
+	}()
+
+	return chokeAlgCh, trackerUpdateCh
+}
+
 func main() {
 	if len(os.Args) != 2 {
 		log.Fatalf("invalid number of arguments, expected 2, got %v", len(os.Args))
@@ -224,14 +245,15 @@ func main() {
 
 	launchClients(2, mainCtx, &torrent, comms, &results, peerInfo)
 
-	signalChannel := make(chan os.Signal, 2)
-	signal.Notify(signalChannel, os.Interrupt, syscall.SIGINT)
+	signalCh := make(chan os.Signal, 2)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT)
+
+	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, peerInfo.Interval)
+
 	for {
 		exit := false
 		select {
-		// TODO: case: updating tracker every torrent.Interval
-		// TODO: case: choke algorithm tick every 10 seconds
-		case <-signalChannel:
+		case <-signalCh:
 			log.Printf("SIGINT caught, terminating")
 			cancel()
 			time.Sleep(time.Second)
@@ -246,6 +268,12 @@ func main() {
 				log.Fatalf("ERROR: encountered an error while setting a bit in bitfield to true, index=%d, err=%s", piece.Index, err)
 			}
 			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
+		case <-chokeAlgorithmCh:
+			// TODO: Implement choke algorithm
+			log.Printf("choke algorithm tick")
+		case <-trackerUpdateCh:
+			// TODO: Implement tracker update
+			log.Printf("tracker update tick")
 		}
 
 		if exit {
