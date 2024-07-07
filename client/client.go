@@ -17,9 +17,18 @@ import (
 const PipelineLength int = 5
 const ChunkSize int = 1 << 14
 
-func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, comms types.Communication) {
+func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication) {
 	log.Printf("INFO: started seeding to target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
+
+	peerIdOptional := ctx.Value("peer-id")
+	if peerIdOptional == nil {
+		log.Fatalf("ERROR: context is missing value")
+	}
+	peerId, ok := peerIdOptional.(string)
+	if !ok {
+		log.Fatalf("ERROR: context does not contain a string")
+	}
 
 	peer, err := bittorrent.AcceptConnection(conn, *torrent, peerId)
 	if err != nil {
@@ -31,9 +40,18 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId
 	communicationLoop(ctx, conn, torrent, &peer, comms)
 }
 
-func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerId string, comms types.Communication) {
+func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication) {
 	log.Printf("INFO: started leeching from target=%s", conn.RemoteAddr().String())
 	defer conn.Close()
+
+	peerIdOptional := ctx.Value("peer-id")
+	if peerIdOptional == nil {
+		log.Fatalf("ERROR: context is missing value")
+	}
+	peerId, ok := peerIdOptional.(string)
+	if !ok {
+		log.Fatalf("ERROR: context does not contain a string")
+	}
 
 	peer, err := bittorrent.InitiateConnection(conn, *torrent, peerId)
 	if err != nil {
@@ -41,7 +59,7 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peerI
 		return
 	}
 
-	log.Printf("INFO [%s]: handshake complete", peer.ID)
+	log.Printf("INFO  [%s]: handshake complete", peer.ID)
 	communicationLoop(ctx, conn, torrent, &peer, comms)
 }
 
@@ -93,7 +111,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// if we are interested but choked, send 'interested'
 		if progress.order != nil && peer.ChokedBy && !peer.InterestedSent {
 			sendInterested(peer, conn)
-			log.Printf("INFO [%s]: sent interested message", peer.ID)
+			log.Printf("INFO  [%s]: sent interested message", peer.ID)
 		}
 
 		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), send the requests

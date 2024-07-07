@@ -23,7 +23,7 @@ import (
 
 const Port int = 6881
 
-func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId string, comms types.Communication) {
+func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
 	if err != nil {
 		log.Fatalf("encountered error listening on port=%d, error=%s", Port, err)
@@ -35,11 +35,11 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, peerId str
 			log.Printf("ERROR: accept failed")
 		}
 
-		go client.Seed(ctx, conn, torrent, peerId, comms)
+		go client.Seed(ctx, conn, torrent, comms)
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId string, comms types.Communication, peerInfo types.PeerInformation, peerIndex int) error {
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, peerInfo types.PeerInformation, peerIndex int) error {
 	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
 	log.Printf("connecting to %s", peerAddr)
 
@@ -51,7 +51,7 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, peerId strin
 		return fmt.Errorf("connection to peer=%s failed, err=%s", peerAddr, err)
 	}
 
-	go client.Leech(ctx, conn, torrent, peerId, comms)
+	go client.Leech(ctx, conn, torrent, comms)
 
 	return nil
 }
@@ -201,15 +201,15 @@ func main() {
 		comms.Orders <- p
 	}
 
-	mainCtx, cancel := context.WithCancel(context.Background())
+	mainCtx, cancel := context.WithCancel(context.WithValue(context.Background(), "peer-id", peerId))
 
-	go listeningServer(mainCtx, &torrent, peerId, comms)
+	go listeningServer(mainCtx, &torrent, comms)
 
 	// WIP: start one thread
-	err = connectToPeer(mainCtx, &torrent, peerId, comms, peerInfo, 0)
+	err = connectToPeer(mainCtx, &torrent, comms, peerInfo, 0)
 	for i := 1; err != nil; i += 1 {
 		log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i-1], err)
-		err = connectToPeer(mainCtx, &torrent, peerId, comms, peerInfo, i)
+		err = connectToPeer(mainCtx, &torrent, comms, peerInfo, i)
 	}
 
 	signalChannel := make(chan os.Signal, 2)
