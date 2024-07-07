@@ -135,6 +135,30 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *Results) err
 	return nil
 }
 
+func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, peerInfo types.PeerInformation) {
+	numberOfConnections := 0
+	peerCons := make(map[int]struct{})
+	for numberOfConnections < numberOfClients {
+		var err error = nil
+		i := 0
+		for {
+			_, ok := peerCons[i]
+			if !ok {
+				err = connectToPeer(ctx, torrent, comms, peerInfo, i)
+			}
+			if err != nil {
+				log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i], err)
+				i += 1
+			} else {
+				break
+			}
+		}
+		peerCons[i] = struct{}{}
+		log.Printf("connected to peer number %d", i)
+		numberOfConnections += 1
+	}
+}
+
 type Results struct {
 	pieces     []*types.Piece
 	piecesDone int
@@ -205,12 +229,7 @@ func main() {
 
 	go listeningServer(mainCtx, &torrent, comms)
 
-	// WIP: start one thread
-	err = connectToPeer(mainCtx, &torrent, comms, peerInfo, 0)
-	for i := 1; err != nil; i += 1 {
-		log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i-1], err)
-		err = connectToPeer(mainCtx, &torrent, comms, peerInfo, i)
-	}
+	launchClients(2, mainCtx, &torrent, comms, peerInfo)
 
 	signalChannel := make(chan os.Signal, 2)
 	signal.Notify(signalChannel, os.Interrupt, syscall.SIGINT)

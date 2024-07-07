@@ -123,16 +123,22 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		select {
 		case <-ctx.Done():
 			log.Printf("INFO  [%s]: seeder closed", peer.ID)
+			if progress.order != nil {
+				comms.Orders <- progress.order
+			}
 			return
 		case msg, ok := <-msgChannel:
 			if !ok {
 				log.Printf("INFO  [%s]: connection to target=%s lost", peer.ID, peer.Addr.String())
+				if progress.order != nil {
+					comms.Orders <- progress.order
+				}
 				return
 			}
 			if msg.KeepAlive {
 				continue
 			}
-			log.Printf("INFO  [%s]: received msg, code=%d from target=%s", peer.ID, msg.Code, peer.Addr)
+			log.Printf("INFO  [%s]: received message=%s from target=%s", peer.ID, bittorrent.CodeToString(msg.Code), peer.Addr)
 
 			err := handleMessage(msg, peer, &progress, *torrent)
 			if err != nil {
@@ -209,7 +215,6 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 		// then add to the request list
 		progress.requests = append(progress.requests, nextRequest)
 		progress.nextToRequest = nextRequest.start + ChunkSize
-		log.Printf("INFO  [%s]: requested chunk index=%d, start=%d, len=%d", peer.ID, progress.order.Index, nextRequest.start, nextRequest.length)
 	}
 }
 
@@ -240,7 +245,7 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 		return fmt.Errorf("ERROR [%s]: error while sending 'have' message, err=%s", peer.ID, err)
 	}
 
-	log.Printf("INFO  [%s]: piece %d hash check verified, piece complete", peer.ID, progress.order.Index)
+	log.Printf("INFO  [%s]: piece %d hash check OK, piece complete", peer.ID, progress.order.Index)
 	comms.Results <- &types.Piece{
 		Index:  progress.order.Index,
 		Data:   progress.buf,

@@ -156,6 +156,30 @@ const (
 	MsgCancel        byte = 8
 )
 
+func CodeToString(code byte) string {
+	switch code {
+	case MsgChoke:
+		return "CHOKE"
+	case MsgUnchoke:
+		return "UNCHOKE"
+	case MsgInterested:
+		return "INTERESTED"
+	case MsgNotInterested:
+		return "NOT INTERESTED"
+	case MsgHave:
+		return "HAVE"
+	case MsgBitfield:
+		return "BITFIELD"
+	case MsgRequest:
+		return "REQUEST"
+	case MsgPiece:
+		return "PIECE"
+	case MsgCancel:
+		return "CANCEL"
+	}
+	return "UNKNOWN"
+}
+
 type PeerMessage struct {
 	KeepAlive bool
 	Code      byte
