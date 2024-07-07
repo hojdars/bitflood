@@ -153,7 +153,9 @@ func deserializeHandshake(reader io.Reader) (HandshakeData, error) {
 }
 
 func sendBitfield(conn net.Conn, results *types.Results) error {
+	results.Lock.Lock()
 	bitfieldMsg := PeerMessage{KeepAlive: false, Code: MsgBitfield, Data: results.Bitfield.Bytes()}
+	results.Lock.Unlock()
 	bfMsgBytes, err := SerializeMessage(bitfieldMsg)
 	if err != nil {
 		return fmt.Errorf("error while serializing bitfield message to target=%s, err=%s", conn.RemoteAddr().String(), err)
