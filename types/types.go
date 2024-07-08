@@ -52,7 +52,7 @@ type Piece struct {
 	Index            int
 	Length           int
 	Data             []byte
-	DownloadedFromId string
+	DownloadedFromId string // TODO: implement in clients and utilize this in main to keep track of peer generosity
 }
 
 type PeerInterest struct {
@@ -66,7 +66,7 @@ type Communication struct {
 	PeerInterested chan PeerInterest // N seeds -> 1 main
 
 	PeersToUnchoke  chan []string // 1 main -> 1 seed
-	ConnectionEnded chan struct{}
+	ConnectionEnded chan struct{} // 1 seed -> 1 main
 }
 
 func (p Piece) Serialize() []byte {

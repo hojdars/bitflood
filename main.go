@@ -441,6 +441,7 @@ func main() {
 			// TODO: Implement tracker update
 			log.Printf("tracker update tick")
 		case interestedPeer := <-sharedComms.PeerInterested:
+			// TODO: Implement keeping track of interested peers
 			log.Printf("interested peer, id=%s", interestedPeer.Id)
 		}
 
