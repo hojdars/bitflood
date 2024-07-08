@@ -24,7 +24,7 @@ import (
 const ChokeAlgorithmTick int = 10
 const Port int = 6881
 
-func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
+func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, conns *Connections) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
 	if err != nil {
 		log.Fatalf("encountered error listening on port=%d, error=%s", Port, err)
@@ -33,16 +33,39 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("ERROR: accept failed")
+			log.Printf("ERROR: accept failed, err=%s", err)
+			continue
 		}
 
-		go client.Seed(ctx, conn, torrent, comms, results)
+		connection, err := conns.Add(conn.RemoteAddr())
+		if err != nil {
+			log.Printf("ERROR: adding a connection to pool failed, error=%s", err)
+			continue
+		}
+
+		newComms := types.Communication{
+			Orders:          comms.Orders,
+			Results:         comms.Results,
+			PeerInterested:  comms.PeerInterested,
+			PeersToUnchoke:  connection.peersToUnchokeCh,
+			ConnectionEnded: connection.connectionEnded,
+		}
+
+		go client.Seed(ctx, conn, torrent, newComms, results)
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation, peerIndex int) error {
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation, peerIndex int, conns *Connections) error {
 	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
 	log.Printf("connecting to %s", peerAddr)
+
+	isOpen, err := conns.IsOpen(peerAddr)
+	if err != nil {
+		return fmt.Errorf("error while checking if already connected to IP=%s, err=%s", peerInfo.IPs[peerIndex].String(), err)
+	}
+	if isOpen {
+		return fmt.Errorf("already connected to IP=%s", peerInfo.IPs[peerIndex].String())
+	}
 
 	var d net.Dialer
 	d.Timeout = time.Second * 2
@@ -52,7 +75,20 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.
 		return fmt.Errorf("connection to peer=%s failed, err=%s", peerAddr, err)
 	}
 
-	go client.Leech(ctx, conn, torrent, comms, results)
+	connection, err := conns.Add(conn.RemoteAddr())
+	if err != nil {
+		return fmt.Errorf("adding a connection to pool failed, error=%s", err)
+	}
+
+	newComms := types.Communication{
+		Orders:          comms.Orders,
+		Results:         comms.Results,
+		PeerInterested:  comms.PeerInterested,
+		PeersToUnchoke:  connection.peersToUnchokeCh,
+		ConnectionEnded: connection.connectionEnded,
+	}
+
+	go client.Leech(ctx, conn, torrent, newComms, results)
 
 	return nil
 }
@@ -136,22 +172,23 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *types.Result
 	return nil
 }
 
-func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation) {
+func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation, conns *Connections) {
 	numberOfConnections := 0
 	peerCons := make(map[int]struct{})
 	for numberOfConnections < numberOfClients {
 		var err error = nil
 		i := 0
-		for {
+		for ; ; i += 1 {
 			_, ok := peerCons[i]
-			if !ok {
-				err = connectToPeer(ctx, torrent, comms, results, peerInfo, i)
+			if ok {
+				continue
 			}
-			if err != nil {
-				log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i], err)
-				i += 1
-			} else {
+
+			err = connectToPeer(ctx, torrent, comms, results, peerInfo, i, conns)
+			if err == nil {
 				break
+			} else {
+				log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i], err)
 			}
 		}
 		peerCons[i] = struct{}{}
@@ -178,6 +215,128 @@ func launchTimers(chokeInterval, trackerInterval int) (chan struct{}, chan struc
 	}()
 
 	return chokeAlgCh, trackerUpdateCh
+}
+
+type Connection struct {
+	ip               net.Addr
+	peersToUnchokeCh chan []string // main -> seed, sends array of 'peer-id' of peers that should be unchoked this tick
+	connectionEnded  chan struct{}
+}
+
+type Connections struct {
+	peers []Connection
+	lock  sync.Mutex
+}
+
+func (conns *Connections) IsOpen(inputIp string) (bool, error) {
+	getIpFromAddr := func(inAddr net.Addr) (string, error) {
+		if addr, ok := inAddr.(*net.TCPAddr); ok {
+			return addr.IP.String(), nil
+		} else {
+			return "", fmt.Errorf("cannot get IP from addr=%s", inAddr)
+		}
+	}
+
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+
+	for _, peer := range conns.peers {
+		peerIp, err := getIpFromAddr(peer.ip)
+		if err != nil {
+			return false, fmt.Errorf("cannot check IsOpen, invalid address present in connections, addr=%s, err=%s", peer.ip.String(), err)
+		}
+
+		if peerIp == inputIp {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (conns *Connections) Add(inputAddr net.Addr) (*Connection, error) {
+	getIpFromAddr := func(inAddr net.Addr) (string, error) {
+		if addr, ok := inAddr.(*net.TCPAddr); ok {
+			return addr.IP.String(), nil
+		} else {
+			return "", fmt.Errorf("cannot get IP from addr=%s", inAddr)
+		}
+	}
+
+	inputIp, err := getIpFromAddr(inputAddr)
+	if err != nil {
+		return nil, fmt.Errorf("cannot check IsOpen, invalid input address, addr=%s, err=%s", inputAddr.String(), err)
+	}
+
+	isOpen, err := conns.IsOpen(inputIp)
+	if isOpen {
+		return nil, fmt.Errorf("error adding connection, connection already open")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error adding connection, error while checking connection open, err=%s", err)
+	}
+
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+
+	newConnection := Connection{
+		ip:               inputAddr,
+		peersToUnchokeCh: make(chan []string),
+		connectionEnded:  make(chan struct{}),
+	}
+	conns.peers = append(conns.peers, newConnection)
+	return &conns.peers[len(conns.peers)-1], nil
+}
+
+func (conns *Connections) Remove(ip net.Addr) error {
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+
+	indexToDrop := -1
+	for i, peer := range conns.peers {
+		if peer.ip == ip {
+			indexToDrop = i
+		}
+	}
+	if indexToDrop == -1 {
+		return fmt.Errorf("error removing connection, connection not found")
+	}
+
+	conns.peers[indexToDrop] = conns.peers[len(conns.peers)-1]
+	conns.peers = conns.peers[:len(conns.peers)-1]
+
+	return nil
+}
+
+func updateOnlineConnections(connections *Connections) {
+	connections.lock.Lock()
+	toRemove := make([]net.Addr, 0)
+	for _, peerConnection := range connections.peers {
+		select {
+		case _, ok := <-peerConnection.connectionEnded:
+			if !ok {
+				log.Printf("detected connection closed, address=%s", peerConnection.ip.String())
+				toRemove = append(toRemove, peerConnection.ip)
+			}
+		default:
+			continue
+		}
+	}
+
+	toRemoveLen := len(toRemove)
+	connections.lock.Unlock()
+	for _, r := range toRemove {
+		err := connections.Remove(r)
+		if err != nil {
+			log.Printf("ERROR: error while removing connection=%s, err=%s", r.String(), err)
+		}
+	}
+
+	if toRemoveLen > 0 {
+		log.Printf("finished removing %d offline connections", toRemoveLen)
+	} else {
+		log.Println("no new offline connections")
+
+	}
 }
 
 func main() {
@@ -225,7 +384,11 @@ func main() {
 	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(peerInfo.IPs), peerInfo.Interval)
 
 	// TODO [MVP]: fill 'workQueue' with each piece
-	comms := types.Communication{Orders: make(chan *types.PieceOrder, len(torrent.PieceHashes)), Results: make(chan *types.Piece, len(torrent.PieceHashes))}
+	sharedComms := types.Communication{
+		Orders:         make(chan *types.PieceOrder, len(torrent.PieceHashes)),
+		Results:        make(chan *types.Piece, len(torrent.PieceHashes)),
+		PeerInterested: make(chan types.PeerInterest, len(peerInfo.IPs)+50),
+	}
 	requests := []int{0, 1, 1001, 1003, 2005, 2024}
 	for _, r := range requests {
 		have, err := results.Bitfield.Get(r)
@@ -236,14 +399,16 @@ func main() {
 			continue
 		}
 		p := &types.PieceOrder{Index: r, Length: torrent.PieceLength, Hash: torrent.PieceHashes[r]}
-		comms.Orders <- p
+		sharedComms.Orders <- p
 	}
 
 	mainCtx, cancel := context.WithCancel(context.WithValue(context.Background(), "peer-id", peerId))
 
-	go listeningServer(mainCtx, &torrent, comms, &results)
+	connections := Connections{peers: make([]Connection, 0), lock: sync.Mutex{}}
 
-	launchClients(2, mainCtx, &torrent, comms, &results, peerInfo)
+	go listeningServer(mainCtx, &torrent, sharedComms, &results, &connections)
+
+	launchClients(2, mainCtx, &torrent, sharedComms, &results, peerInfo, &connections)
 
 	signalCh := make(chan os.Signal, 2)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT)
@@ -252,13 +417,14 @@ func main() {
 
 	for {
 		exit := false
+
 		select {
 		case <-signalCh:
 			log.Printf("SIGINT caught, terminating")
 			cancel()
 			time.Sleep(time.Second)
 			exit = true
-		case piece := <-comms.Results:
+		case piece := <-sharedComms.Results:
 			results.Lock.Lock()
 			results.Pieces[piece.Index] = piece
 			results.PiecesDone += 1
@@ -274,7 +440,11 @@ func main() {
 		case <-trackerUpdateCh:
 			// TODO: Implement tracker update
 			log.Printf("tracker update tick")
+		case interestedPeer := <-sharedComms.PeerInterested:
+			log.Printf("interested peer, id=%s", interestedPeer.Id)
 		}
+
+		updateOnlineConnections(&connections)
 
 		if exit {
 			break

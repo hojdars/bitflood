@@ -55,12 +55,18 @@ type Piece struct {
 	DownloadedFromId string
 }
 
-type Communication struct {
-	Orders  chan *PieceOrder // main -> leech
-	Results chan *Piece      // leech -> main
+type PeerInterest struct {
+	Id           string
+	IsInterested bool
+}
 
-	InterestedPeers chan string   // seed -> main
-	PeersToUnchoke  chan []string // main -> seed
+type Communication struct {
+	Orders         chan *PieceOrder  // 1 main -> N leeches
+	Results        chan *Piece       // N leeches -> 1 main
+	PeerInterested chan PeerInterest // N seeds -> 1 main
+
+	PeersToUnchoke  chan []string // 1 main -> 1 seed
+	ConnectionEnded chan struct{}
 }
 
 func (p Piece) Serialize() []byte {

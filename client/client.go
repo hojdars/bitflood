@@ -126,6 +126,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			if progress.order != nil {
 				comms.Orders <- progress.order
 			}
+			close(comms.ConnectionEnded)
 			return
 		case msg, ok := <-msgChannel:
 			if !ok {
@@ -133,6 +134,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 				if progress.order != nil {
 					comms.Orders <- progress.order
 				}
+				close(comms.ConnectionEnded)
 				return
 			}
 			if msg.KeepAlive {
@@ -140,7 +142,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			}
 			log.Printf("INFO  [%s]: received message=%s from target=%s", peer.ID, bittorrent.CodeToString(msg.Code), peer.Addr)
 
-			err := handleMessage(msg, peer, &progress, *torrent)
+			err := handleMessage(msg, peer, &progress, *torrent, comms)
 			if err != nil {
 				log.Printf("ERROR [%s]: error while handling message, err=%s", peer.ID, err)
 			}
@@ -256,7 +258,7 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 	return nil
 }
 
-func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile) error {
+func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile, comms types.Communication) error {
 	switch msg.Code {
 	case bittorrent.MsgChoke:
 		log.Printf("INFO  [%s]: choked", peer.ID)
@@ -267,8 +269,10 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		peer.ChokedBy = false
 	case bittorrent.MsgInterested:
 		peer.Interested = true
+		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: true}
 	case bittorrent.MsgNotInterested:
 		peer.Interested = false
+		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: false}
 	case bittorrent.MsgHave:
 		// TODO: Seeding-only, peer confirmed to have received the piece
 		return nil
