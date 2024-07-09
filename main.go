@@ -47,8 +47,8 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 			Orders:          comms.Orders,
 			Results:         comms.Results,
 			PeerInterested:  comms.PeerInterested,
+			ConnectionEnded: comms.ConnectionEnded,
 			PeersToUnchoke:  connection.peersToUnchokeCh,
-			ConnectionEnded: connection.connectionEnded,
 		}
 
 		go client.Seed(ctx, conn, torrent, newComms, results)
@@ -84,8 +84,8 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.
 		Orders:          comms.Orders,
 		Results:         comms.Results,
 		PeerInterested:  comms.PeerInterested,
+		ConnectionEnded: comms.ConnectionEnded,
 		PeersToUnchoke:  connection.peersToUnchokeCh,
-		ConnectionEnded: connection.connectionEnded,
 	}
 
 	go client.Leech(ctx, conn, torrent, newComms, results)
@@ -220,7 +220,6 @@ func launchTimers(chokeInterval, trackerInterval int) (chan struct{}, chan struc
 type Connection struct {
 	ip               net.Addr
 	peersToUnchokeCh chan []string // main -> seed, sends array of 'peer-id' of peers that should be unchoked this tick
-	connectionEnded  chan struct{}
 }
 
 type Connections struct {
@@ -281,7 +280,6 @@ func (conns *Connections) Add(inputAddr net.Addr) (*Connection, error) {
 	newConnection := Connection{
 		ip:               inputAddr,
 		peersToUnchokeCh: make(chan []string),
-		connectionEnded:  make(chan struct{}),
 	}
 	conns.peers = append(conns.peers, newConnection)
 	return &conns.peers[len(conns.peers)-1], nil
@@ -307,18 +305,24 @@ func (conns *Connections) Remove(ip net.Addr) error {
 	return nil
 }
 
-func updateOnlineConnections(connections *Connections) {
+func updateOnlineConnections(connections *Connections, comms *types.Communication) {
 	connections.lock.Lock()
 	toRemove := make([]net.Addr, 0)
-	for _, peerConnection := range connections.peers {
+	for {
+		done := false
 		select {
-		case _, ok := <-peerConnection.connectionEnded:
-			if !ok {
-				log.Printf("detected connection closed, address=%s", peerConnection.ip.String())
-				toRemove = append(toRemove, peerConnection.ip)
+		case ended, ok := <-comms.ConnectionEnded:
+			if ok {
+				log.Printf("detected connection closed, peer-id=%s, address=%s", ended.Id, ended.Addr.String())
+				toRemove = append(toRemove, ended.Addr)
+			} else {
+				log.Printf("ERROR: peer ended channel was closed")
 			}
 		default:
-			continue
+			done = true
+		}
+		if done {
+			break
 		}
 	}
 
@@ -385,9 +389,10 @@ func main() {
 
 	// TODO [MVP]: fill 'workQueue' with each piece
 	sharedComms := types.Communication{
-		Orders:         make(chan *types.PieceOrder, len(torrent.PieceHashes)),
-		Results:        make(chan *types.Piece, len(torrent.PieceHashes)),
-		PeerInterested: make(chan types.PeerInterest, len(peerInfo.IPs)+50),
+		Orders:          make(chan *types.PieceOrder, len(torrent.PieceHashes)),
+		Results:         make(chan *types.Piece, len(torrent.PieceHashes)),
+		PeerInterested:  make(chan types.PeerInterest, len(peerInfo.IPs)+50),
+		ConnectionEnded: make(chan types.ConnectionEnd, len(peerInfo.IPs)+50),
 	}
 	requests := []int{0, 1, 1001, 1003, 2005, 2024}
 	for _, r := range requests {
@@ -453,7 +458,7 @@ func main() {
 			log.Printf("interested peer, id=%s", interestedPeer.Id)
 		}
 
-		updateOnlineConnections(&connections)
+		updateOnlineConnections(&connections, &sharedComms)
 
 		if exit {
 			break

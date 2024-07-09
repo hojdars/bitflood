@@ -60,13 +60,18 @@ type PeerInterest struct {
 	IsInterested bool
 }
 
-type Communication struct {
-	Orders         chan *PieceOrder  // 1 main -> N leeches
-	Results        chan *Piece       // N leeches -> 1 main
-	PeerInterested chan PeerInterest // N seeds -> 1 main
+type ConnectionEnd struct {
+	Id   string
+	Addr net.Addr
+}
 
-	PeersToUnchoke  chan []string // 1 main -> 1 seed
-	ConnectionEnded chan struct{} // 1 seed -> 1 main
+type Communication struct {
+	Orders          chan *PieceOrder   // 1 main -> N leeches
+	Results         chan *Piece        // N leeches -> 1 main
+	PeerInterested  chan PeerInterest  // N seeds -> 1 main
+	ConnectionEnded chan ConnectionEnd // N seeds -> 1 main
+
+	PeersToUnchoke chan []string // 1 main -> 1 seed
 }
 
 func (p Piece) Serialize() []byte {

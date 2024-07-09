@@ -33,6 +33,7 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms 
 	peer, err := bittorrent.AcceptConnection(conn, *torrent, results, peerId)
 	if err != nil {
 		log.Printf("ERROR: error accepting bittorrent connection from target=%s", conn.RemoteAddr().String())
+		comms.ConnectionEnded <- types.ConnectionEnd{Id: "unknown", Addr: conn.RemoteAddr()}
 		return
 	}
 
@@ -56,6 +57,7 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms
 	peer, err := bittorrent.InitiateConnection(conn, *torrent, results, peerId)
 	if err != nil {
 		log.Printf("ERROR: error initiating bittorrent connection to target=%s, err=%s", conn.RemoteAddr().String(), err)
+		comms.ConnectionEnded <- types.ConnectionEnd{Id: "unknown", Addr: conn.RemoteAddr()}
 		return
 	}
 
@@ -126,7 +128,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			if progress.order != nil {
 				comms.Orders <- progress.order
 			}
-			close(comms.ConnectionEnded)
+			comms.ConnectionEnded <- types.ConnectionEnd{Id: peer.ID, Addr: peer.Addr}
 			return
 		case msg, ok := <-msgChannel:
 			if !ok {
@@ -134,7 +136,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 				if progress.order != nil {
 					comms.Orders <- progress.order
 				}
-				close(comms.ConnectionEnded)
+				comms.ConnectionEnded <- types.ConnectionEnd{Id: peer.ID, Addr: peer.Addr}
 				return
 			}
 			if msg.KeepAlive {
