@@ -305,7 +305,7 @@ func (conns *Connections) Remove(ip net.Addr) error {
 	return nil
 }
 
-func updateOnlineConnections(connections *Connections, comms *types.Communication) {
+func updateOnlineConnections(connections *Connections, comms *types.Communication, generosity *map[string]int, interestedPeers *map[string]bool) {
 	connections.lock.Lock()
 	toRemove := make([]net.Addr, 0)
 	for {
@@ -315,8 +315,10 @@ func updateOnlineConnections(connections *Connections, comms *types.Communicatio
 			if ok {
 				log.Printf("detected connection closed, peer-id=%s, address=%s", ended.Id, ended.Addr.String())
 				toRemove = append(toRemove, ended.Addr)
+				delete(*generosity, ended.Id)
+				delete(*interestedPeers, ended.Id)
 			} else {
-				log.Printf("ERROR: peer ended channel was closed")
+				log.Fatalf("ERROR: peer ended channel was closed")
 			}
 		default:
 			done = true
@@ -421,6 +423,7 @@ func main() {
 	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, peerInfo.Interval)
 
 	generosityMap := make(map[string]int)
+	interestedPeers := make(map[string]bool)
 	for {
 		exit := false
 
@@ -448,17 +451,19 @@ func main() {
 			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
 		case <-chokeAlgorithmCh:
 			// TODO: Implement choke algorithm
-			log.Printf("choke algorithm tick, generosity=%v", generosityMap)
-			generosityMap = make(map[string]int) // reset the generosity, only count pieces sent in the last 10 secs
+			log.Printf("choke algorithm tick, generosity=%v, interest=%v", generosityMap, interestedPeers)
+			// reset generosity and interested peers after choke tick is done
+			generosityMap = make(map[string]int)
+			interestedPeers = make(map[string]bool)
 		case <-trackerUpdateCh:
 			// TODO: Implement tracker update
 			log.Printf("tracker update tick")
 		case interestedPeer := <-sharedComms.PeerInterested:
-			// TODO: Implement keeping track of interested peers
-			log.Printf("interested peer, id=%s", interestedPeer.Id)
+			log.Printf("interested peer, id=%s, isInterested=%t", interestedPeer.Id, interestedPeer.IsInterested)
+			interestedPeers[interestedPeer.Id] = interestedPeer.IsInterested
 		}
 
-		updateOnlineConnections(&connections, &sharedComms)
+		updateOnlineConnections(&connections, &sharedComms, &generosityMap, &interestedPeers)
 
 		if exit {
 			break
