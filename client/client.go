@@ -82,13 +82,17 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 	}()
 
 	var progress pieceProgress
+	var seedState seederState
 
-	// TODO: So far only listens to messages and logs them, seeding needs to be implemented
 	for {
 		// TODO:
 		// if should send keep alive, send keep alive
-		// receive 'request' and 'interested' messages
+
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
+		if !peer.Choking && peer.Interested && len(seedState.requested) > 0 {
+			log.Printf("INFO  [%s]: uploading to peer", peer.ID)
+			// TODO: Upload chunk
+		}
 
 		// check if we have a complete piece -> verify hash, send 'have' message and send through results channel
 		if progress.order != nil && progress.numDone == progress.order.Length {
@@ -144,7 +148,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			}
 			log.Printf("INFO  [%s]: received message=%s from target=%s", peer.ID, bittorrent.CodeToString(msg.Code), peer.Addr)
 
-			err := handleMessage(msg, peer, &progress, *torrent, comms)
+			err := handleMessage(msg, peer, &progress, *torrent, comms, &seedState)
 			if err != nil {
 				log.Printf("ERROR [%s]: error while handling message, err=%s", peer.ID, err)
 			}
@@ -197,11 +201,11 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 		}
 
 		len := min(ChunkSize, progress.order.Length-progress.nextToRequest)
-		nextRequest := request{start: progress.nextToRequest, length: len}
+		nextRequest := request{index: progress.order.Index, start: progress.nextToRequest, length: len}
 
 		// craft the message
 		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
-		msg.SerializeRequestMsg(progress.order.Index, nextRequest.start, nextRequest.length)
+		msg.SerializeRequestMsg(nextRequest.index, nextRequest.start, nextRequest.length)
 
 		// send over TCP
 		// TODO: technically, we can create the requests in this thread and then launch goroutine to send them
@@ -261,7 +265,7 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 	return nil
 }
 
-func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile, comms types.Communication) error {
+func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile, comms types.Communication, seedState *seederState) error {
 	switch msg.Code {
 	case bittorrent.MsgChoke:
 		log.Printf("INFO  [%s]: choked", peer.ID)
@@ -277,7 +281,7 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		peer.Interested = false
 		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: false}
 	case bittorrent.MsgHave:
-		// TODO: Seeding-only, peer confirmed to have received the piece
+		log.Printf("INFO  [%s]: peer confirmed upload of piece index=%d", peer.ID, binary.BigEndian.Uint32(msg.Data))
 		return nil
 	case bittorrent.MsgBitfield:
 		expectedLength := len(torrent.PieceHashes) / 8
@@ -290,7 +294,11 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		peer.Bitfield = bitfield.FromBytes(msg.Data, len(torrent.PieceHashes))
 		log.Printf("INFO  [%s]: received bitfield", peer.ID)
 	case bittorrent.MsgRequest:
-		// TODO: Seeding-only, peer is requesting a piece
+		index, start, length, err := msg.DeserializeRequestMsg()
+		if err != nil {
+			return fmt.Errorf("error while parsing request message, err=%s", err)
+		}
+		seedState.requested = append(seedState.requested, request{index: index, start: start, length: length})
 		return nil
 	case bittorrent.MsgPiece:
 		index, begin, data, err := msg.DeserializePieceMsg()

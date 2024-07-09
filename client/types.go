@@ -7,6 +7,7 @@ import (
 )
 
 type request struct {
+	index  int
 	start  int
 	length int
 }
@@ -29,4 +30,8 @@ func (p *pieceProgress) DeleteRequest(start, length int) error {
 		}
 	}
 	return fmt.Errorf("could not find request with start=%d, length=%d", start, length)
+}
+
+type seederState struct {
+	requested []request
 }
