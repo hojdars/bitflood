@@ -38,7 +38,7 @@ func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms 
 	}
 
 	log.Printf("INFO  [%s]: handshake complete", peer.ID)
-	communicationLoop(ctx, conn, torrent, &peer, comms)
+	communicationLoop(ctx, conn, torrent, &peer, comms, results)
 }
 
 func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
@@ -62,10 +62,10 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms
 	}
 
 	log.Printf("INFO  [%s]: handshake complete", peer.ID)
-	communicationLoop(ctx, conn, torrent, &peer, comms)
+	communicationLoop(ctx, conn, torrent, &peer, comms, results)
 }
 
-func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, comms types.Communication) {
+func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, comms types.Communication, results *types.Results) {
 	msgChannel := make(chan bittorrent.PeerMessage)
 
 	// goroutine to accept incoming messages from TCP
@@ -91,7 +91,13 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 		if !peer.Choking && peer.Interested && len(seedState.requested) > 0 {
 			log.Printf("INFO  [%s]: uploading to peer", peer.ID)
-			// TODO: Upload chunk
+			uploadedIndex, err := uploadChunk(conn, *peer, results, &seedState)
+			if err != nil {
+				log.Printf("ERROR [%s]: error while uploading a chunk, err=%s", peer.ID, err)
+			} else {
+				seedState.requested[uploadedIndex] = seedState.requested[len(seedState.requested)-1]
+				seedState.requested = seedState.requested[:len(seedState.requested)-1]
+			}
 		}
 
 		// check if we have a complete piece -> verify hash, send 'have' message and send through results channel
@@ -127,6 +133,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// after this is done, block on context.Done or message incoming
 		select {
+		// TODO: handle incoming unchoke directives from main (determined by the choke algorithm)
 		case <-ctx.Done():
 			log.Printf("INFO  [%s]: seeder closed", peer.ID)
 			if progress.order != nil {
@@ -154,6 +161,39 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			}
 		}
 	}
+}
+
+func uploadChunk(conn net.Conn, peer types.Peer, results *types.Results, seedState *seederState) (int, error) {
+	if len(seedState.requested) == 0 {
+		return -1, fmt.Errorf("cannot upload chunk, no requests pending")
+	}
+
+	request := 0
+
+	msg := bittorrent.PeerMessage{
+		KeepAlive: false,
+		Code:      bittorrent.MsgPiece,
+	}
+
+	pieceIndex := seedState.requested[request].index
+	pieceStart := seedState.requested[request].start
+	pieceLength := seedState.requested[request].length
+
+	results.Lock.RLock()
+	data := results.Pieces[pieceIndex].Data[pieceStart : pieceStart+pieceLength]
+	msg.SerializePieceMsg(pieceIndex, pieceStart, data)
+	results.Lock.RUnlock()
+
+	msgData, err := bittorrent.SerializeMessage(msg)
+	if err != nil {
+		return -1, fmt.Errorf("ERROR [%s]: error while serializing 'piece' message, err=%s", peer.ID, err)
+	}
+	_, err = conn.Write(msgData)
+	if err != nil {
+		return -1, fmt.Errorf("ERROR [%s]: error while sending 'piece' message, err=%s", peer.ID, err)
+	}
+
+	return request, nil
 }
 
 func getPiece(peer types.Peer, workQueue chan *types.PieceOrder) *types.PieceOrder {

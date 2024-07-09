@@ -250,6 +250,13 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 	return PeerMessage{KeepAlive: false, Code: codeBuf[0], Data: dataBuf}, nil
 }
 
+func (msg *PeerMessage) SerializePieceMsg(index, begin int, piece []byte) {
+	msg.Data = make([]byte, 8)
+	binary.BigEndian.PutUint32(msg.Data[0:4], uint32(index))
+	binary.BigEndian.PutUint32(msg.Data[4:8], uint32(begin))
+	msg.Data = append(msg.Data, piece...)
+}
+
 func (msg PeerMessage) DeserializePieceMsg() (index, begin int, piece []byte, err error) {
 	if msg.Code != MsgPiece {
 		err = fmt.Errorf("cannot deserialize piece message on a non-piece message, msg-code=%d", msg.Code)
