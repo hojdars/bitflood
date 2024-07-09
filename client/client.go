@@ -249,9 +249,10 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 
 	log.Printf("INFO  [%s]: piece %d hash check OK, piece complete", peer.ID, progress.order.Index)
 	comms.Results <- &types.Piece{
-		Index:  progress.order.Index,
-		Data:   progress.buf,
-		Length: progress.order.Length,
+		Index:            progress.order.Index,
+		Data:             progress.buf,
+		Length:           progress.order.Length,
+		DownloadedFromId: peer.ID,
 	}
 	peer.Downloaded += uint32(progress.numDone)
 

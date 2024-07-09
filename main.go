@@ -415,6 +415,7 @@ func main() {
 
 	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, peerInfo.Interval)
 
+	generosityMap := make(map[string]int)
 	for {
 		exit := false
 
@@ -433,10 +434,17 @@ func main() {
 			if err != nil {
 				log.Fatalf("ERROR: encountered an error while setting a bit in bitfield to true, index=%d, err=%s", piece.Index, err)
 			}
+			_, found := generosityMap[piece.DownloadedFromId]
+			if found {
+				generosityMap[piece.DownloadedFromId] += 1
+			} else {
+				generosityMap[piece.DownloadedFromId] = 1
+			}
 			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
 		case <-chokeAlgorithmCh:
 			// TODO: Implement choke algorithm
-			log.Printf("choke algorithm tick")
+			log.Printf("choke algorithm tick, generosity=%v", generosityMap)
+			generosityMap = make(map[string]int) // reset the generosity, only count pieces sent in the last 10 secs
 		case <-trackerUpdateCh:
 			// TODO: Implement tracker update
 			log.Printf("tracker update tick")

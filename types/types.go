@@ -52,7 +52,7 @@ type Piece struct {
 	Index            int
 	Length           int
 	Data             []byte
-	DownloadedFromId string // TODO: implement in clients and utilize this in main to keep track of peer generosity
+	DownloadedFromId string
 }
 
 type PeerInterest struct {
