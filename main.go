@@ -5,9 +5,11 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/signal"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -345,6 +347,56 @@ func updateOnlineConnections(connections *Connections, comms *types.Communicatio
 	}
 }
 
+func chokeAlgorithm(generosity map[string]int, interest map[string]bool) []string {
+	interestedPeers := make([]string, 0)
+	for id, isInterested := range interest {
+		if isInterested {
+			interestedPeers = append(interestedPeers, id)
+		}
+	}
+
+	if len(interestedPeers) < 5 {
+		return interestedPeers
+	}
+
+	sortedGenerosity := make([]struct {
+		id         string
+		downloaded int
+	}, 0)
+
+	for id, downloaded := range generosity {
+		if isInterested, isPresent := interest[id]; !isPresent || !isInterested {
+			continue
+		}
+
+		sortedGenerosity = append(sortedGenerosity, struct {
+			id         string
+			downloaded int
+		}{id, downloaded})
+	}
+
+	sort.Slice(sortedGenerosity, func(i, j int) bool {
+		return sortedGenerosity[i].downloaded > sortedGenerosity[j].downloaded
+	})
+
+	pickedPeers := make([]string, 5)
+	for i := 0; i < min(4, len(sortedGenerosity)); i += 1 {
+		pickedPeers[i] = sortedGenerosity[i].id
+	}
+
+	if len(sortedGenerosity) < 5 {
+		return pickedPeers
+	}
+
+	fifthRandom := rand.IntN(len(sortedGenerosity) - 4)
+	pickedPeers[4] = sortedGenerosity[4+fifthRandom].id
+
+	if len(pickedPeers) != 5 {
+		panic(fmt.Sprintf("incorrect number peers picked by the choke algorithm, got %d, expected 5", len(pickedPeers)))
+	}
+	return pickedPeers
+}
+
 func main() {
 	if len(os.Args) != 2 {
 		log.Fatalf("invalid number of arguments, expected 2, got %v", len(os.Args))
@@ -450,11 +502,11 @@ func main() {
 			}
 			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
 		case <-chokeAlgorithmCh:
-			// TODO: Implement choke algorithm
 			log.Printf("choke algorithm tick, generosity=%v, interest=%v", generosityMap, interestedPeers)
-			// reset generosity and interested peers after choke tick is done
-			generosityMap = make(map[string]int)
-			interestedPeers = make(map[string]bool)
+			unchokedPeers := chokeAlgorithm(generosityMap, interestedPeers)
+			for _, peer := range connections.peers {
+				peer.peersToUnchokeCh <- unchokedPeers
+			}
 		case <-trackerUpdateCh:
 			// TODO: Implement tracker update
 			log.Printf("tracker update tick")

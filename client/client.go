@@ -133,7 +133,6 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// after this is done, block on context.Done or message incoming
 		select {
-		// TODO: handle incoming unchoke directives from main (determined by the choke algorithm)
 		case <-ctx.Done():
 			log.Printf("INFO  [%s]: seeder closed", peer.ID)
 			if progress.order != nil {
@@ -158,6 +157,31 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			err := handleMessage(msg, peer, &progress, *torrent, comms, &seedState)
 			if err != nil {
 				log.Printf("ERROR [%s]: error while handling message, err=%s", peer.ID, err)
+			}
+		case unchokedPeers, ok := <-comms.PeersToUnchoke:
+			if !ok {
+				log.Printf("ERROR [%s]: unchoke channel to main lost, seeder exiting", peer.ID)
+				if progress.order != nil {
+					comms.Orders <- progress.order
+				}
+				comms.ConnectionEnded <- types.ConnectionEnd{Id: peer.ID, Addr: peer.Addr}
+				return
+			}
+			peerIncluded := false
+			for _, id := range unchokedPeers {
+				if id == peer.ID {
+					peerIncluded = true
+					break
+				}
+			}
+			if peerIncluded {
+				peer.Choking = false
+				log.Printf("INFO  [%s]: unchoking", peer.ID)
+			} else {
+				if !peer.Choking { // only print the 'choking' message if we are currently not choking
+					log.Printf("INFO  [%s]: choking", peer.ID)
+				}
+				peer.Choking = true
 			}
 		}
 	}
