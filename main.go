@@ -447,6 +447,7 @@ func main() {
 		Results:         make(chan *types.Piece, len(torrent.PieceHashes)),
 		PeerInterested:  make(chan types.PeerInterest, len(peerInfo.IPs)+50),
 		ConnectionEnded: make(chan types.ConnectionEnd, len(peerInfo.IPs)+50),
+		Uploaded:        make(chan int),
 	}
 	requests := []int{0, 1, 1001, 1003, 2005, 2024}
 	for _, r := range requests {
@@ -474,6 +475,7 @@ func main() {
 
 	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, peerInfo.Interval)
 
+	uploadedPieces := 0
 	generosityMap := make(map[string]int)
 	interestedPeers := make(map[string]bool)
 	for {
@@ -513,6 +515,9 @@ func main() {
 		case interestedPeer := <-sharedComms.PeerInterested:
 			log.Printf("interested peer, id=%s, isInterested=%t", interestedPeer.Id, interestedPeer.IsInterested)
 			interestedPeers[interestedPeer.Id] = interestedPeer.IsInterested
+		case <-sharedComms.Uploaded:
+			uploadedPieces += 1
+			log.Printf("piece uploaded, total uploaded pieces=%d", uploadedPieces)
 		}
 
 		updateOnlineConnections(&connections, &sharedComms, &generosityMap, &interestedPeers)

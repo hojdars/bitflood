@@ -345,7 +345,9 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		peer.Interested = false
 		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: false}
 	case bittorrent.MsgHave:
-		log.Printf("INFO  [%s]: peer confirmed upload of piece index=%d", peer.ID, binary.BigEndian.Uint32(msg.Data))
+		pieceIndex := int(binary.BigEndian.Uint32(msg.Data))
+		log.Printf("INFO  [%s]: peer confirmed upload of piece index=%d", peer.ID, pieceIndex)
+		comms.Uploaded <- pieceIndex
 		return nil
 	case bittorrent.MsgBitfield:
 		expectedLength := len(torrent.PieceHashes) / 8

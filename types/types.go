@@ -70,6 +70,7 @@ type Communication struct {
 	Results         chan *Piece        // N leeches -> 1 main
 	PeerInterested  chan PeerInterest  // N seeds -> 1 main
 	ConnectionEnded chan ConnectionEnd // N seeds -> 1 main
+	Uploaded        chan int           // N seeds -> 1 main
 
 	PeersToUnchoke chan []string // 1 main -> 1 seed
 }
