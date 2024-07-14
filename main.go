@@ -25,7 +25,7 @@ import (
 
 const ConnectionBlacklistDuration = time.Second * 60
 const ChokeAlgorithmTick int = 10
-const MaximumDownloaders = 2
+const MaximumDownloaders = 20
 const Port uint16 = 6881
 
 func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, conns *Connections) {
@@ -59,24 +59,24 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, address string, conns *Connections) error {
-	log.Printf("connecting to %s", address)
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, ip string, port uint16, conns *Connections) error {
+	log.Printf("connecting to %s", ip)
 
-	isOpen, err := conns.IsOpen(address)
+	isOpen, err := conns.IsOpen(ip)
 	if err != nil {
-		return fmt.Errorf("error while checking if already connected to IP=%s, err=%s", address, err)
+		return fmt.Errorf("error while checking if already connected to IP=%s, err=%s", ip, err)
 	}
 	if isOpen {
-		return fmt.Errorf("already connected to IP=%s", address)
+		return fmt.Errorf("already connected to IP=%s", ip)
 	}
 
-	// isBlacklisted, err := conns.IsBlacklisted(address)
-
 	var d net.Dialer
-	d.Timeout = time.Second * 2
+	d.Timeout = time.Millisecond * 250
 
+	address := fmt.Sprintf("%s:%d", ip, port)
 	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
+		conns.BlacklistIp(ip)
 		return fmt.Errorf("connection to peer=%s failed, err=%s", address, err)
 	}
 
@@ -177,53 +177,53 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *types.Result
 	return nil
 }
 
-func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.TrackerInformation, conns *Connections) {
+func launchClients(requestedConnections int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.TrackerInformation, conns *Connections) {
 	numberOfConnections := 0
-	peerCons := make(map[int]struct{})
-	for numberOfConnections < numberOfClients {
-		var err error = nil
-		i := 0
-		for ; ; i += 1 {
-			_, ok := peerCons[i]
-			if ok {
-				continue
-			}
+	for i := 0; i < len(peerInfo.IPs); i += 1 {
+		ip := peerInfo.IPs[i].String()
 
-			ip := peerInfo.IPs[i].String()
-			isOpen, e := conns.IsOpen(ip)
-			if e != nil {
-				log.Printf("ERROR: error while checking if already connected to IP=%s, err=%s, skipping", ip, e)
-				continue
-			}
-			if isOpen {
-				continue
-			}
-
-			isBlacklisted, eb := conns.IsBlacklisted(ip)
-			if eb != nil {
-				log.Printf("ERROR: error while checking if already connected to IP=%s, err=%s, skipping", ip, eb)
-				continue
-			}
-			if isBlacklisted {
-				continue
-			}
-
-			peerAddr := fmt.Sprintf("%s:%d", ip, peerInfo.Ports[i])
-
-			err = connectToPeer(ctx, torrent, comms, results, peerAddr, conns)
-			if err == nil {
-				break
-			} else {
-				log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i], err)
-			}
+		// if already open -> skip
+		isOpen, e := conns.IsOpen(ip)
+		if e != nil {
+			log.Printf("ERROR: error while checking if already connected to IP=%s, err=%s, skipping", ip, e)
+			continue
 		}
-		peerCons[i] = struct{}{}
-		log.Printf("connected to peer number %d", i)
-		numberOfConnections += 1
+		if isOpen {
+			continue
+		}
+
+		// if blacklisted -> skip
+		isBlacklisted, eb := conns.IsBlacklisted(ip)
+		if eb != nil {
+			log.Printf("ERROR: error while checking if already connected to IP=%s, err=%s, skipping", ip, eb)
+			continue
+		}
+		if isBlacklisted {
+			continue
+		}
+
+		err := connectToPeer(ctx, torrent, comms, results, ip, peerInfo.Ports[i], conns)
+		if err != nil {
+			log.Printf("ERROR: encountered an error connecting to target=%s, err=%s", peerInfo.IPs[i], err)
+		} else {
+			numberOfConnections += 1
+			log.Printf("connected to peer number %d, connected to %d peers", i, numberOfConnections)
+		}
+
+		if numberOfConnections == requestedConnections {
+			break
+		}
+		if numberOfConnections > requestedConnections {
+			panic(fmt.Sprintf("connected to more peers than wanted, wanted to connect to %d, connected to %d", requestedConnections, numberOfConnections))
+		}
+	}
+
+	if numberOfConnections > 0 {
+		log.Printf("launched %d connections, connected to %d peers", numberOfConnections, conns.GetConnectedNumber())
 	}
 }
 
-func launchTimers(chokeInterval, trackerInterval int) (chan struct{}, chan struct{}) {
+func launchTimers(chokeInterval, trackerInterval, loggingInterval int) (chan struct{}, chan struct{}, chan struct{}) {
 	chokeAlgCh := make(chan struct{})
 	go func() {
 		for {
@@ -240,7 +240,15 @@ func launchTimers(chokeInterval, trackerInterval int) (chan struct{}, chan struc
 		}
 	}()
 
-	return chokeAlgCh, trackerUpdateCh
+	loggingCh := make(chan struct{})
+	go func() {
+		for {
+			time.Sleep(time.Second * time.Duration(loggingInterval))
+			loggingCh <- struct{}{}
+		}
+	}()
+
+	return chokeAlgCh, trackerUpdateCh, loggingCh
 }
 
 type Connection struct {
@@ -349,7 +357,7 @@ func (conns *Connections) IsBlacklisted(ip string) (bool, error) {
 	return true, nil
 }
 
-func (conns *Connections) Blacklist(inputAddr net.Addr) error {
+func (conns *Connections) BlacklistAddr(inputAddr net.Addr) error {
 	getIpFromAddr := func(inAddr net.Addr) (string, error) {
 		if addr, ok := inAddr.(*net.TCPAddr); ok {
 			return addr.IP.String(), nil
@@ -370,6 +378,19 @@ func (conns *Connections) Blacklist(inputAddr net.Addr) error {
 	return nil
 }
 
+func (conns *Connections) BlacklistIp(ip string) error {
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+	conns.blacklist[ip] = time.Now()
+	return nil
+}
+
+func (conns *Connections) GetConnectedNumber() int {
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+	return len(conns.peers)
+}
+
 func updateOnlineConnections(connections *Connections, comms *types.Communication, generosity *map[string]int, interestedPeers *map[string]bool) {
 	toRemove := make([]net.Addr, 0)
 	for {
@@ -381,7 +402,7 @@ func updateOnlineConnections(connections *Connections, comms *types.Communicatio
 				toRemove = append(toRemove, ended.Addr)
 				delete(*generosity, ended.Id)
 				delete(*interestedPeers, ended.Id)
-				connections.Blacklist(ended.Addr)
+				connections.BlacklistAddr(ended.Addr)
 			} else {
 				log.Fatalf("ERROR: peer ended channel was closed")
 			}
@@ -403,9 +424,6 @@ func updateOnlineConnections(connections *Connections, comms *types.Communicatio
 
 	if toRemoveLen > 0 {
 		log.Printf("finished removing %d offline connections", toRemoveLen)
-	} else {
-		log.Println("no new offline connections")
-
 	}
 }
 
@@ -506,7 +524,6 @@ func main() {
 	}
 	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(trackerInfo.IPs), trackerInfo.Interval)
 
-	// TODO [MVP]: fill 'workQueue' with each piece
 	sharedComms := types.Communication{
 		Orders:          make(chan *types.PieceOrder, len(torrent.PieceHashes)),
 		Results:         make(chan *types.Piece, len(torrent.PieceHashes)),
@@ -514,8 +531,8 @@ func main() {
 		ConnectionEnded: make(chan types.ConnectionEnd, len(trackerInfo.IPs)+50),
 		Uploaded:        make(chan int),
 	}
-	requests := []int{0, 1, 1001, 1003, 2005, 2024}
-	for _, r := range requests {
+
+	for r := 0; r < torrent.GetNumberOfPieces(); r += 1 {
 		have, err := results.Bitfield.Get(r)
 		if err != nil {
 			log.Fatalf("ERROR: encountered error while checking bitfield, err=%s", err)
@@ -538,7 +555,7 @@ func main() {
 	signalCh := make(chan os.Signal, MaximumDownloaders)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT)
 
-	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, trackerInfo.Interval)
+	chokeAlgorithmCh, trackerUpdateCh, loggingCh := launchTimers(ChokeAlgorithmTick, trackerInfo.Interval, 1)
 
 	uploadedPieces := 0
 	generosityMap := make(map[string]int)
@@ -552,6 +569,12 @@ func main() {
 			cancel()
 			time.Sleep(time.Second)
 			exit = true
+		case <-loggingCh:
+			results.Lock.Lock()
+			piecesDone := results.PiecesDone
+			results.Lock.Unlock()
+			piecePercent := 100.0 * float32(piecesDone) / float32(len(torrent.PieceHashes))
+			log.Printf("downloaded %d/%d pieces, %f%%, uploaded %d pieces", piecesDone, len(torrent.PieceHashes), piecePercent, uploadedPieces)
 		case piece := <-sharedComms.Results:
 			results.Lock.Lock()
 			results.Pieces[piece.Index] = piece
@@ -567,7 +590,6 @@ func main() {
 			} else {
 				generosityMap[piece.DownloadedFromId] = 1
 			}
-			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
 		case <-chokeAlgorithmCh:
 			unchokedPeers := chokeAlgorithm(generosityMap, interestedPeers)
 			for _, peer := range connections.peers {
@@ -604,7 +626,6 @@ func main() {
 		}
 
 		if len(connections.peers) < MaximumDownloaders {
-			log.Printf("launching %d additional downloaders", MaximumDownloaders-len(connections.peers))
 			launchClients(MaximumDownloaders-len(connections.peers), mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
 		}
 	}

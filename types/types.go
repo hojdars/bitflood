@@ -26,6 +26,13 @@ type TorrentFile struct {
 	AnnounceList [][]string
 }
 
+func (t TorrentFile) GetNumberOfPieces() int {
+	if t.Length%t.PieceLength != 0 {
+		panic(fmt.Sprintf("incorrect torrent file loaded, length=%d is not 0 modulo piece length=%d", t.Length, t.PieceLength))
+	}
+	return t.Length / t.PieceLength
+}
+
 type TrackerInformation struct {
 	Tracker  *url.URL
 	Interval int

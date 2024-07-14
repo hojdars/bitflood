@@ -115,7 +115,6 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		if progress.order == nil && peer.Bitfield.Length == len(torrent.PieceHashes) {
 			progress.order = getPiece(*peer, comms.Orders)
 			if progress.order != nil {
-				log.Printf("INFO  [%s]: downloading piece index=%d", peer.ID, progress.order.Index)
 				progress.buf = make([]byte, progress.order.Length)
 			}
 		}
@@ -152,7 +151,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			if msg.KeepAlive {
 				continue
 			}
-			log.Printf("INFO  [%s]: received message=%s from target=%s", peer.ID, bittorrent.CodeToString(msg.Code), peer.Addr)
+			// log.Printf("INFO  [%s]: received message=%s from target=%s", peer.ID, bittorrent.CodeToString(msg.Code), peer.Addr)
 
 			err := handleMessage(msg, peer, &progress, *torrent, comms, &seedState)
 			if err != nil {
@@ -291,7 +290,6 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 }
 
 func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, comms types.Communication) error {
-	log.Printf("INFO  [%s]: piece %d download complete", peer.ID, progress.order.Index)
 	hash := sha1.Sum(progress.buf)
 	if !bytes.Equal(hash[:], progress.order.Hash[:]) {
 		log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, progress.order.Index)
@@ -317,7 +315,6 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 		return fmt.Errorf("ERROR [%s]: error while sending 'have' message, err=%s", peer.ID, err)
 	}
 
-	log.Printf("INFO  [%s]: piece %d hash check OK, piece complete", peer.ID, progress.order.Index)
 	comms.Results <- &types.Piece{
 		Index:            progress.order.Index,
 		Data:             progress.buf,
@@ -341,9 +338,11 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 	case bittorrent.MsgInterested:
 		peer.Interested = true
 		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: true}
+		log.Printf("INFO  [%s]: peer is interested", peer.ID)
 	case bittorrent.MsgNotInterested:
 		peer.Interested = false
 		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: false}
+		log.Printf("INFO  [%s]: peer is not interested", peer.ID)
 	case bittorrent.MsgHave:
 		pieceIndex := int(binary.BigEndian.Uint32(msg.Data))
 		log.Printf("INFO  [%s]: peer confirmed upload of piece index=%d", peer.ID, pieceIndex)
