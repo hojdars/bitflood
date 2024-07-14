@@ -281,7 +281,7 @@ func (conns *Connections) Add(inputAddr net.Addr) (*Connection, error) {
 
 	newConnection := Connection{
 		ip:               inputAddr,
-		peersToUnchokeCh: make(chan []string),
+		peersToUnchokeCh: make(chan []string, 1),
 	}
 	conns.peers = append(conns.peers, newConnection)
 	return &conns.peers[len(conns.peers)-1], nil
