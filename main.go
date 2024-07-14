@@ -338,7 +338,7 @@ func (conns *Connections) Add(inputAddr net.Addr) (*Connection, error) {
 
 	newConnection := Connection{
 		ip:               inputAddr,
-		peersToUnchokeCh: make(chan []string, 6), // TODO: this can lead to a deadlock if the peer is stuck
+		peersToUnchokeCh: make(chan []string, 1),
 	}
 	conns.peers = append(conns.peers, newConnection)
 	return &conns.peers[len(conns.peers)-1], nil
@@ -623,7 +623,12 @@ func main() {
 		case <-chokeAlgorithmCh:
 			unchokedPeers := chokeAlgorithm(generosityMap, interestedPeers)
 			for _, peer := range connections.peers {
-				peer.peersToUnchokeCh <- unchokedPeers
+				select {
+				case peer.peersToUnchokeCh <- unchokedPeers:
+					continue
+				default:
+					log.Printf("WARN: peer=%s is not reading their choke-algorithm channel", peer.ip)
+				}
 			}
 			log.Printf("choke algorithm tick complete, unchoking=%v, generosity=%v, interest=%v", unchokedPeers, generosityMap, interestedPeers)
 		case <-trackerUpdateCh:

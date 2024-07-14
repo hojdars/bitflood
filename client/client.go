@@ -61,7 +61,7 @@ func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms
 		return
 	}
 
-	log.Printf("INFO  [%s]: handshake complete", peer.ID)
+	log.Printf("INFO  [%s]: handshake complete with addr=%s", peer.ID, peer.Addr)
 	communicationLoop(ctx, conn, torrent, &peer, comms, results)
 }
 
@@ -132,7 +132,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// after this is done, block on context.Done or message incoming
 		select {
 		case <-ctx.Done():
-			log.Printf("INFO  [%s]: seeder closed", peer.ID)
+			log.Printf("INFO  [%s]: seeder closed (addr=%s)", peer.ID, peer.Addr)
 			if progress.order != nil {
 				comms.Orders <- progress.order
 			}
