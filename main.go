@@ -557,6 +557,7 @@ func main() {
 		Uploaded:        make(chan int, len(trackerInfo.IPs)+50),
 	}
 
+	// TODO: The order of piece downloads should be random
 	for r := 0; r < torrent.GetNumberOfPieces(); r += 1 {
 		have, err := results.Bitfield.Get(r)
 		if err != nil {
