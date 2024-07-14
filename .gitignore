@@ -5,3 +5,4 @@ main
 *.part
 
 testdata/
+.vscode/
