@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"sync"
 
 	"github.com/hojdars/bitflood/bitfield"
@@ -25,7 +26,8 @@ type TorrentFile struct {
 	AnnounceList [][]string
 }
 
-type PeerInformation struct {
+type TrackerInformation struct {
+	Tracker  *url.URL
 	Interval int
 	IPs      []net.IP
 	Ports    []uint16

@@ -5,7 +5,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"log"
-	"math/rand/v2"
+	"math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -24,7 +24,8 @@ import (
 )
 
 const ChokeAlgorithmTick int = 10
-const Port int = 6881
+const MaximumDownloaders = 2
+const Port uint16 = 6881
 
 func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, conns *Connections) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", Port))
@@ -57,7 +58,14 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation, peerIndex int, conns *Connections) error {
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.TrackerInformation, peerIndex int, conns *Connections) error {
+	if peerIndex > len(peerInfo.IPs) {
+		return fmt.Errorf("index out of bounds, i=%d, number of peers=%d", peerIndex, len(peerInfo.IPs))
+	}
+	if len(peerInfo.IPs) != len(peerInfo.Ports) {
+		return fmt.Errorf("length of Peer IPs and Peer ports is not the same, length of IPs=%d, length of ports=%d", len(peerInfo.IPs), len(peerInfo.Ports))
+	}
+
 	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
 	log.Printf("connecting to %s", peerAddr)
 
@@ -174,7 +182,7 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *types.Result
 	return nil
 }
 
-func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.PeerInformation, conns *Connections) {
+func launchClients(numberOfClients int, ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.TrackerInformation, conns *Connections) {
 	numberOfConnections := 0
 	peerCons := make(map[int]struct{})
 	for numberOfConnections < numberOfClients {
@@ -308,7 +316,6 @@ func (conns *Connections) Remove(ip net.Addr) error {
 }
 
 func updateOnlineConnections(connections *Connections, comms *types.Communication, generosity *map[string]int, interestedPeers *map[string]bool) {
-	connections.lock.Lock()
 	toRemove := make([]net.Addr, 0)
 	for {
 		done := false
@@ -331,7 +338,6 @@ func updateOnlineConnections(connections *Connections, comms *types.Communicatio
 	}
 
 	toRemoveLen := len(toRemove)
-	connections.lock.Unlock()
 	for _, r := range toRemove {
 		err := connections.Remove(r)
 		if err != nil {
@@ -388,7 +394,7 @@ func chokeAlgorithm(generosity map[string]int, interest map[string]bool) []strin
 		return pickedPeers
 	}
 
-	fifthRandom := rand.IntN(len(sortedGenerosity) - 4)
+	fifthRandom := rand.Intn(len(sortedGenerosity) - 4)
 	pickedPeers[4] = sortedGenerosity[4+fifthRandom].id
 
 	if len(pickedPeers) != 5 {
@@ -399,30 +405,30 @@ func chokeAlgorithm(generosity map[string]int, interest map[string]bool) []strin
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatalf("invalid number of arguments, expected 2, got %v", len(os.Args))
+		log.Fatalf("ERROR: invalid number of arguments, expected 2, got %v", len(os.Args))
 	}
 
 	filename := os.Args[1]
 
 	if _, err := os.Stat(filename); err != nil {
-		log.Fatalf("file does not exist, file=%s", filename)
+		log.Fatalf("ERROR: file does not exist, file=%s", filename)
 	}
 
 	log.Printf("started on file=%s\n", filename)
 
 	file, err := os.Open(filename)
 	if err != nil {
-		log.Fatalf("cannot open file, err=%s", err)
+		log.Fatalf("ERROR: cannot open file, err=%s", err)
 	}
 
 	torrent, err := decode.DecodeTorrentFile(file)
 	if err != nil {
-		log.Fatalf("encountered an error during .torrent file decoding, err=%s", err)
+		log.Fatalf("ERROR: encountered an error during .torrent file decoding, err=%s", err)
 	}
 
 	if torrent.Length == 0 {
 		// TODO: specification requires either 'length' or 'key files', implement 'key files'
-		log.Fatalf("key 'length' is missing, unsupported .torrent file")
+		log.Fatalf("ERROR: key 'length' is missing, unsupported .torrent file")
 	}
 
 	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
@@ -431,29 +437,32 @@ func main() {
 	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
 	err = loadPiecesFromPartialFiles(torrent, &results)
 	if err != nil {
-		log.Fatalf("encountered an error while reading partial files, err=%s", err)
+		log.Fatalf("ERROR: encountered an error while reading partial files, err=%s", err)
 	}
-	savedPieces := bitfield.Copy(&results.Bitfield)
+	alreadySavedNumber := results.PiecesDone
+	alreadySavedPieces := bitfield.Copy(&results.Bitfield)
 
-	peerInfo, peerId, err := bittorrent.GetPeers(torrent, &results, Port)
+	peerId := bittorrent.MakePeerId()
+	leftToDownload := torrent.Length - results.PiecesDone*torrent.PieceLength
+	trackerInfo, err := bittorrent.GetTrackerFromFile(torrent, peerId, Port, 0, 0, leftToDownload)
 	if err != nil {
-		log.Fatalf("encountered an error while retrieving peers from tracker, err=%s", err)
+		log.Fatalf("ERROR: encountered an error while retrieving peers from tracker, err=%s", err)
 	}
-	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(peerInfo.IPs), peerInfo.Interval)
+	log.Printf("set peer-id to=%s, received %d peers, interval=%d", peerId, len(trackerInfo.IPs), trackerInfo.Interval)
 
 	// TODO [MVP]: fill 'workQueue' with each piece
 	sharedComms := types.Communication{
 		Orders:          make(chan *types.PieceOrder, len(torrent.PieceHashes)),
 		Results:         make(chan *types.Piece, len(torrent.PieceHashes)),
-		PeerInterested:  make(chan types.PeerInterest, len(peerInfo.IPs)+50),
-		ConnectionEnded: make(chan types.ConnectionEnd, len(peerInfo.IPs)+50),
+		PeerInterested:  make(chan types.PeerInterest, len(trackerInfo.IPs)+50),
+		ConnectionEnded: make(chan types.ConnectionEnd, len(trackerInfo.IPs)+50),
 		Uploaded:        make(chan int),
 	}
 	requests := []int{0, 1, 1001, 1003, 2005, 2024}
 	for _, r := range requests {
 		have, err := results.Bitfield.Get(r)
 		if err != nil {
-			log.Fatalf("encountered error while checking bitfield, err=%s", err)
+			log.Fatalf("ERROR: encountered error while checking bitfield, err=%s", err)
 		}
 		if have {
 			continue
@@ -468,12 +477,12 @@ func main() {
 
 	go listeningServer(mainCtx, &torrent, sharedComms, &results, &connections)
 
-	launchClients(2, mainCtx, &torrent, sharedComms, &results, peerInfo, &connections)
+	launchClients(MaximumDownloaders, mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
 
-	signalCh := make(chan os.Signal, 2)
+	signalCh := make(chan os.Signal, MaximumDownloaders)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT)
 
-	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, peerInfo.Interval)
+	chokeAlgorithmCh, trackerUpdateCh := launchTimers(ChokeAlgorithmTick, trackerInfo.Interval)
 
 	uploadedPieces := 0
 	generosityMap := make(map[string]int)
@@ -506,12 +515,27 @@ func main() {
 		case <-chokeAlgorithmCh:
 			log.Printf("choke algorithm tick, generosity=%v, interest=%v", generosityMap, interestedPeers)
 			unchokedPeers := chokeAlgorithm(generosityMap, interestedPeers)
+			log.Println("choke done")
 			for _, peer := range connections.peers {
+				log.Printf("sending choke info to %s", peer.ip.String())
 				peer.peersToUnchokeCh <- unchokedPeers
 			}
+			log.Println("sending chokes done")
 		case <-trackerUpdateCh:
-			// TODO: Implement tracker update
-			log.Printf("tracker update tick")
+			results.Lock.Lock()
+			uploaded := uploadedPieces * torrent.PieceLength
+			downloaded := (results.PiecesDone - alreadySavedNumber) * torrent.PieceLength
+			leftToDownload := torrent.Length - results.PiecesDone*torrent.PieceLength
+			results.Lock.Unlock()
+			trackerInfo, err = bittorrent.UpdateTracker(trackerInfo.Tracker, torrent, peerId, Port, uploaded, downloaded, leftToDownload)
+			if err != nil {
+				trackerInfo, err = bittorrent.GetTrackerFromFile(torrent, peerId, Port, uploaded, downloaded, leftToDownload)
+				if err != nil {
+					log.Printf("ERROR: encountered a fatal error while updating tracker, exiting, err=%s", err)
+					exit = true // cannot get a tracker -> unrecoverable error -> shutdown
+				}
+			}
+			log.Printf("tracker updated, uploaded=%d, downloaded=%d, left-to-download=%d", uploaded, downloaded, leftToDownload)
 		case interestedPeer := <-sharedComms.PeerInterested:
 			log.Printf("interested peer, id=%s, isInterested=%t", interestedPeer.Id, interestedPeer.IsInterested)
 			interestedPeers[interestedPeer.Id] = interestedPeer.IsInterested
@@ -520,16 +544,24 @@ func main() {
 			log.Printf("piece uploaded, total uploaded pieces=%d", uploadedPieces)
 		}
 
+		log.Println("updating online connections")
 		updateOnlineConnections(&connections, &sharedComms, &generosityMap, &interestedPeers)
 
 		if exit {
 			break
 		}
+
+		log.Println("updated online connections")
+		if len(connections.peers) < MaximumDownloaders {
+			log.Printf("launching %d additional downloaders", MaximumDownloaders-len(connections.peers))
+			launchClients(MaximumDownloaders-len(connections.peers), mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
+		}
+		log.Println("loop done")
 	}
 
 	log.Printf("saving %d pieces", results.PiecesDone)
 	if results.PiecesDone != len(torrent.PieceHashes) {
-		err := savePartialFiles(torrent, &results, &savedPieces)
+		err := savePartialFiles(torrent, &results, &alreadySavedPieces)
 		if err != nil {
 			log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
 		}

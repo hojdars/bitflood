@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/hojdars/bitflood/assert"
 	"github.com/hojdars/bitflood/types"
 )
 
@@ -17,18 +18,12 @@ func TestGetPeersUrl(t *testing.T) {
 		if err != nil {
 			t.Errorf("got error, err=%s", err)
 		}
-		addGetPeersQuery(url, torrent, 1234, torrent.Length)
-		query := url.String()
+		peerId := "SH01-ziYDZM5WilvkDy9"
+		addGetPeersQuery(url, torrent, peerId, 1234, 0, 0, torrent.Length)
+		got := url.String()
 
 		want := "http://test.org/announce?compact=1&downloaded=0&event=started&info_hash=aabbccddeeffgghhiijj&left=666&peer_id=SH01-ziYDZM5WilvkDy9&port=1234&uploaded=0"
-		// check before random peer id
-		if query[:115] != want[:115] {
-			t.Errorf("got '%v', wanted '%v'", query, want)
-		}
-		// check after random peer id
-		if query[130:] != want[130:] {
-			t.Errorf("got '%v', wanted '%v'", query, want)
-		}
+		assert.Equal(t, got, want)
 	})
 
 	t.Run("different left-to-download", func(t *testing.T) {
@@ -40,17 +35,12 @@ func TestGetPeersUrl(t *testing.T) {
 		if err != nil {
 			t.Errorf("got error, err=%s", err)
 		}
-		addGetPeersQuery(url, torrent, 1234, 400)
-		query := url.String()
+		peerId := "SH01-ziYDZM5WilvkDy9"
+		addGetPeersQuery(url, torrent, peerId, 1234, 0, 0, 400)
+		got := url.String()
 
 		want := "http://test.org/announce?compact=1&downloaded=0&event=started&info_hash=aabbccddeeffgghhiijj&left=400&peer_id=SH01-ziYDZM5WilvkDy9&port=1234&uploaded=0"
-		// check before random peer id
-		if query[:115] != want[:115] {
-			t.Errorf("got '%v', wanted '%v'", query, want)
-		}
-		// check after random peer id
-		if query[130:] != want[130:] {
-			t.Errorf("got '%v', wanted '%v'", query, want)
-		}
+		assert.Equal(t, got, want)
+
 	})
 }

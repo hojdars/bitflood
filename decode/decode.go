@@ -75,18 +75,18 @@ type bitTorrentPeers struct {
 	Peers6   string
 }
 
-func DecodePeerInformation(body io.Reader) (types.PeerInformation, error) {
+func DecodePeerInformation(body io.Reader) (types.TrackerInformation, error) {
 	peers := bitTorrentPeers{}
 	err := bencode.Unmarshal(body, &peers)
 	if err != nil {
-		return types.PeerInformation{}, fmt.Errorf("error while de-bencoding peer information from tracker, err=%s", err)
+		return types.TrackerInformation{}, fmt.Errorf("error while de-bencoding peer information from tracker, err=%s", err)
 	}
 
 	if len(peers.Peers)%6 != 0 {
-		return types.PeerInformation{}, fmt.Errorf("peers array has to be divisible by 6, got len=%d", len(peers.Peers))
+		return types.TrackerInformation{}, fmt.Errorf("peers array has to be divisible by 6, got len=%d", len(peers.Peers))
 	}
 	numberOfPeers := len(peers.Peers) / 6
-	result := types.PeerInformation{Interval: peers.Interval, IPs: make([]net.IP, numberOfPeers), Ports: make([]uint16, numberOfPeers)}
+	result := types.TrackerInformation{Interval: peers.Interval, IPs: make([]net.IP, numberOfPeers), Ports: make([]uint16, numberOfPeers)}
 	for i := 0; i < len(peers.Peers); i += 6 {
 		index := i / 6
 		result.IPs[index] = []byte(peers.Peers[i : i+4])
