@@ -1,6 +1,9 @@
 package bitfield
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 type Bitfield struct {
 	Length int
@@ -10,6 +13,15 @@ type Bitfield struct {
 func New(length int) Bitfield {
 	lenBytes := (length / 8) + 1
 	return Bitfield{Length: length, data: make([]byte, lenBytes)}
+}
+
+func NewFull(length int) Bitfield {
+	lenBytes := (length / 8) + 1
+	bytes := make([]byte, lenBytes)
+	for i := range bytes {
+		bytes[i] = math.MaxUint8
+	}
+	return Bitfield{Length: length, data: bytes}
 }
 
 func (field Bitfield) Bytes() (result []byte) {

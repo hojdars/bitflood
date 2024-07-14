@@ -30,6 +30,16 @@ func TestBitfield(t *testing.T) {
 		assert.Equal(t, got, false)
 	})
 
+	t.Run("make a full bitfield", func(t *testing.T) {
+		bitfield := NewFull(10)
+		assert.Equal(t, bitfield.Length, 10)
+		for i := 0; i < 10; i += 1 {
+			got, err := bitfield.Get(i)
+			assert.IsError(t, err)
+			assert.Equal(t, got, true)
+		}
+	})
+
 	t.Run("getting out of bounds should be error", func(t *testing.T) {
 		bitfield := New(10)
 		_, err := bitfield.Get(10)

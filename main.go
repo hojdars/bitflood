@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -115,6 +116,42 @@ func savePartialFiles(torrent types.TorrentFile, results *types.Results, savedPi
 	err := file.WritePartialFiles(writers, results.Pieces, savedPieces)
 	if err != nil {
 		return fmt.Errorf("error while writing partial files, err=%s", err)
+	}
+
+	return nil
+}
+
+func loadFromFile(torrent types.TorrentFile, results *types.Results) (bool, error) {
+	fullFile, fileErr := os.Open(torrent.Name)
+	if fileErr == nil {
+		err := loadPiecesFromCompleteFile(fullFile, torrent, results)
+		if err == nil {
+			log.Printf("loaded %d pieces from file %s", results.PiecesDone, torrent.Name)
+			return true, nil
+		}
+	}
+
+	if errors.Is(fileErr, os.ErrNotExist) {
+		return false, loadPiecesFromPartialFiles(torrent, results)
+	} else {
+		return false, fmt.Errorf("error while reading file %s, err=%s", torrent.Name, fileErr)
+	}
+}
+
+func loadPiecesFromCompleteFile(fullFile io.Reader, torrent types.TorrentFile, results *types.Results) error {
+	pieces, err := file.Read(fullFile, len(torrent.PieceHashes), torrent.PieceLength)
+	if err != nil {
+		return fmt.Errorf("error while reading pieces from full file, err=%s", err)
+	}
+	results.Pieces = pieces
+	results.PiecesDone = len(torrent.PieceHashes)
+	results.Bitfield = bitfield.NewFull(len(torrent.PieceHashes))
+
+	for _, p := range results.Pieces {
+		hash := sha1.Sum(p.Data)
+		if hash != torrent.PieceHashes[p.Index] {
+			return fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
+		}
 	}
 
 	return nil
@@ -497,12 +534,10 @@ func main() {
 	// load the file or PartialFiles, verify all pieces hashes, create BitField
 	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
 
-	// TODO: load from complete file, set alreadySavedFinalFile if final file exists
-	err = loadPiecesFromPartialFiles(torrent, &results)
+	alreadySavedFinalFile, err := loadFromFile(torrent, &results)
 	if err != nil {
-		log.Fatalf("ERROR: encountered an error while reading partial files, err=%s", err)
+		log.Fatalf("ERROR: encountered an error while loading data from files, err=%s", err)
 	}
-	alreadySavedFinalFile := false
 	alreadySavedNumber := results.PiecesDone
 	alreadySavedPieces := bitfield.Copy(&results.Bitfield)
 
