@@ -23,6 +23,7 @@ import (
 	"github.com/hojdars/bitflood/types"
 )
 
+const ConnectionBlacklistDuration = time.Second * 60
 const ChokeAlgorithmTick int = 10
 const MaximumDownloaders = 2
 const Port uint16 = 6881
@@ -58,31 +59,25 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 	}
 }
 
-func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, peerInfo types.TrackerInformation, peerIndex int, conns *Connections) error {
-	if peerIndex > len(peerInfo.IPs) {
-		return fmt.Errorf("index out of bounds, i=%d, number of peers=%d", peerIndex, len(peerInfo.IPs))
-	}
-	if len(peerInfo.IPs) != len(peerInfo.Ports) {
-		return fmt.Errorf("length of Peer IPs and Peer ports is not the same, length of IPs=%d, length of ports=%d", len(peerInfo.IPs), len(peerInfo.Ports))
-	}
+func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, address string, conns *Connections) error {
+	log.Printf("connecting to %s", address)
 
-	peerAddr := fmt.Sprintf("%s:%d", peerInfo.IPs[peerIndex].String(), peerInfo.Ports[peerIndex])
-	log.Printf("connecting to %s", peerAddr)
-
-	isOpen, err := conns.IsOpen(peerAddr)
+	isOpen, err := conns.IsOpen(address)
 	if err != nil {
-		return fmt.Errorf("error while checking if already connected to IP=%s, err=%s", peerInfo.IPs[peerIndex].String(), err)
+		return fmt.Errorf("error while checking if already connected to IP=%s, err=%s", address, err)
 	}
 	if isOpen {
-		return fmt.Errorf("already connected to IP=%s", peerInfo.IPs[peerIndex].String())
+		return fmt.Errorf("already connected to IP=%s", address)
 	}
+
+	// isBlacklisted, err := conns.IsBlacklisted(address)
 
 	var d net.Dialer
 	d.Timeout = time.Second * 2
 
-	conn, err := d.DialContext(ctx, "tcp", peerAddr)
+	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return fmt.Errorf("connection to peer=%s failed, err=%s", peerAddr, err)
+		return fmt.Errorf("connection to peer=%s failed, err=%s", address, err)
 	}
 
 	connection, err := conns.Add(conn.RemoteAddr())
@@ -194,7 +189,28 @@ func launchClients(numberOfClients int, ctx context.Context, torrent *types.Torr
 				continue
 			}
 
-			err = connectToPeer(ctx, torrent, comms, results, peerInfo, i, conns)
+			ip := peerInfo.IPs[i].String()
+			isOpen, e := conns.IsOpen(ip)
+			if e != nil {
+				log.Printf("ERROR: error while checking if already connected to IP=%s, err=%s, skipping", ip, e)
+				continue
+			}
+			if isOpen {
+				continue
+			}
+
+			isBlacklisted, eb := conns.IsBlacklisted(ip)
+			if eb != nil {
+				log.Printf("ERROR: error while checking if already connected to IP=%s, err=%s, skipping", ip, eb)
+				continue
+			}
+			if isBlacklisted {
+				continue
+			}
+
+			peerAddr := fmt.Sprintf("%s:%d", ip, peerInfo.Ports[i])
+
+			err = connectToPeer(ctx, torrent, comms, results, peerAddr, conns)
 			if err == nil {
 				break
 			} else {
@@ -233,11 +249,12 @@ type Connection struct {
 }
 
 type Connections struct {
-	peers []Connection
-	lock  sync.Mutex
+	peers     []Connection
+	blacklist map[string]time.Time // IP as string -> timestamp of blacklisting
+	lock      sync.Mutex
 }
 
-func (conns *Connections) IsOpen(inputIp string) (bool, error) {
+func (conns *Connections) IsOpen(ip string) (bool, error) {
 	getIpFromAddr := func(inAddr net.Addr) (string, error) {
 		if addr, ok := inAddr.(*net.TCPAddr); ok {
 			return addr.IP.String(), nil
@@ -255,7 +272,7 @@ func (conns *Connections) IsOpen(inputIp string) (bool, error) {
 			return false, fmt.Errorf("cannot check IsOpen, invalid address present in connections, addr=%s, err=%s", peer.ip.String(), err)
 		}
 
-		if peerIp == inputIp {
+		if peerIp == ip {
 			return true, nil
 		}
 	}
@@ -295,13 +312,13 @@ func (conns *Connections) Add(inputAddr net.Addr) (*Connection, error) {
 	return &conns.peers[len(conns.peers)-1], nil
 }
 
-func (conns *Connections) Remove(ip net.Addr) error {
+func (conns *Connections) Remove(inputAddr net.Addr) error {
 	conns.lock.Lock()
 	defer conns.lock.Unlock()
 
 	indexToDrop := -1
 	for i, peer := range conns.peers {
-		if peer.ip == ip {
+		if peer.ip == inputAddr {
 			indexToDrop = i
 		}
 	}
@@ -312,6 +329,44 @@ func (conns *Connections) Remove(ip net.Addr) error {
 	conns.peers[indexToDrop] = conns.peers[len(conns.peers)-1]
 	conns.peers = conns.peers[:len(conns.peers)-1]
 
+	return nil
+}
+
+func (conns *Connections) IsBlacklisted(ip string) (bool, error) {
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+
+	timeBlacklisted, present := conns.blacklist[ip]
+	if !present {
+		return false, nil
+	}
+
+	if time.Now().Sub(timeBlacklisted) > ConnectionBlacklistDuration {
+		delete(conns.blacklist, ip)
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (conns *Connections) Blacklist(inputAddr net.Addr) error {
+	getIpFromAddr := func(inAddr net.Addr) (string, error) {
+		if addr, ok := inAddr.(*net.TCPAddr); ok {
+			return addr.IP.String(), nil
+		} else {
+			return "", fmt.Errorf("cannot get IP from addr=%s", inAddr)
+		}
+	}
+
+	conns.lock.Lock()
+	defer conns.lock.Unlock()
+
+	inputIp, err := getIpFromAddr(inputAddr)
+	if err != nil {
+		return fmt.Errorf("cannot check IsOpen, invalid input address, addr=%s, err=%s", inputAddr.String(), err)
+	}
+
+	conns.blacklist[inputIp] = time.Now()
 	return nil
 }
 
@@ -326,6 +381,7 @@ func updateOnlineConnections(connections *Connections, comms *types.Communicatio
 				toRemove = append(toRemove, ended.Addr)
 				delete(*generosity, ended.Id)
 				delete(*interestedPeers, ended.Id)
+				connections.Blacklist(ended.Addr)
 			} else {
 				log.Fatalf("ERROR: peer ended channel was closed")
 			}
@@ -473,7 +529,7 @@ func main() {
 
 	mainCtx, cancel := context.WithCancel(context.WithValue(context.Background(), "peer-id", peerId))
 
-	connections := Connections{peers: make([]Connection, 0), lock: sync.Mutex{}}
+	connections := Connections{peers: make([]Connection, 0), blacklist: make(map[string]time.Time), lock: sync.Mutex{}}
 
 	go listeningServer(mainCtx, &torrent, sharedComms, &results, &connections)
 
