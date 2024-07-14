@@ -314,7 +314,7 @@ func (conns *Connections) Add(inputAddr net.Addr) (*Connection, error) {
 
 	newConnection := Connection{
 		ip:               inputAddr,
-		peersToUnchokeCh: make(chan []string, 1),
+		peersToUnchokeCh: make(chan []string, 6), // TODO: this can lead to a deadlock if the peer is stuck
 	}
 	conns.peers = append(conns.peers, newConnection)
 	return &conns.peers[len(conns.peers)-1], nil
@@ -529,7 +529,7 @@ func main() {
 		Results:         make(chan *types.Piece, len(torrent.PieceHashes)),
 		PeerInterested:  make(chan types.PeerInterest, len(trackerInfo.IPs)+50),
 		ConnectionEnded: make(chan types.ConnectionEnd, len(trackerInfo.IPs)+50),
-		Uploaded:        make(chan int),
+		Uploaded:        make(chan int, len(trackerInfo.IPs)+50),
 	}
 
 	for r := 0; r < torrent.GetNumberOfPieces(); r += 1 {
@@ -550,7 +550,9 @@ func main() {
 
 	go listeningServer(mainCtx, &torrent, sharedComms, &results, &connections)
 
-	launchClients(MaximumDownloaders, mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
+	if results.PiecesDone != len(torrent.PieceHashes) {
+		launchClients(MaximumDownloaders, mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
+	}
 
 	signalCh := make(chan os.Signal, MaximumDownloaders)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT)
@@ -595,7 +597,7 @@ func main() {
 			for _, peer := range connections.peers {
 				peer.peersToUnchokeCh <- unchokedPeers
 			}
-			log.Printf("choke algorithm tick complete, generosity=%v, interest=%v", generosityMap, interestedPeers)
+			log.Printf("choke algorithm tick complete, unchoking=%v, generosity=%v, interest=%v", unchokedPeers, generosityMap, interestedPeers)
 		case <-trackerUpdateCh:
 			results.Lock.Lock()
 			uploaded := uploadedPieces * torrent.PieceLength
@@ -625,20 +627,24 @@ func main() {
 			break
 		}
 
-		if len(connections.peers) < MaximumDownloaders {
+		if results.PiecesDone != len(torrent.PieceHashes) && len(connections.peers) < MaximumDownloaders {
 			launchClients(MaximumDownloaders-len(connections.peers), mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
 		}
 	}
 
 	log.Printf("saving %d pieces", results.PiecesDone)
-	if results.PiecesDone != len(torrent.PieceHashes) {
-		err := savePartialFiles(torrent, &results, &alreadySavedPieces)
-		if err != nil {
-			log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
-		}
-	} else {
-		// TODO [MVP]: If file is complete, write the complete file and not PartialFile
+
+	err = savePartialFiles(torrent, &results, &alreadySavedPieces)
+	if err != nil {
+		log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
 	}
+
+	// TODO [MVP]: If file is complete, write the complete file and not PartialFile
+	/*
+		if results.PiecesDone != len(torrent.PieceHashes) {
+		} else {
+		}
+	*/
 
 	os.Exit(0)
 }
