@@ -513,14 +513,11 @@ func main() {
 			}
 			log.Printf("downloaded %d/%d pieces, %f%%", results.PiecesDone, len(torrent.PieceHashes), float32(results.PiecesDone)/float32(len(torrent.PieceHashes)))
 		case <-chokeAlgorithmCh:
-			log.Printf("choke algorithm tick, generosity=%v, interest=%v", generosityMap, interestedPeers)
 			unchokedPeers := chokeAlgorithm(generosityMap, interestedPeers)
-			log.Println("choke done")
 			for _, peer := range connections.peers {
-				log.Printf("sending choke info to %s", peer.ip.String())
 				peer.peersToUnchokeCh <- unchokedPeers
 			}
-			log.Println("sending chokes done")
+			log.Printf("choke algorithm tick complete, generosity=%v, interest=%v", generosityMap, interestedPeers)
 		case <-trackerUpdateCh:
 			results.Lock.Lock()
 			uploaded := uploadedPieces * torrent.PieceLength
@@ -537,26 +534,23 @@ func main() {
 			}
 			log.Printf("tracker updated, uploaded=%d, downloaded=%d, left-to-download=%d", uploaded, downloaded, leftToDownload)
 		case interestedPeer := <-sharedComms.PeerInterested:
-			log.Printf("interested peer, id=%s, isInterested=%t", interestedPeer.Id, interestedPeer.IsInterested)
 			interestedPeers[interestedPeer.Id] = interestedPeer.IsInterested
+			log.Printf("interested peer registered, id=%s, isInterested=%t", interestedPeer.Id, interestedPeer.IsInterested)
 		case <-sharedComms.Uploaded:
 			uploadedPieces += 1
 			log.Printf("piece uploaded, total uploaded pieces=%d", uploadedPieces)
 		}
 
-		log.Println("updating online connections")
 		updateOnlineConnections(&connections, &sharedComms, &generosityMap, &interestedPeers)
 
 		if exit {
 			break
 		}
 
-		log.Println("updated online connections")
 		if len(connections.peers) < MaximumDownloaders {
 			log.Printf("launching %d additional downloaders", MaximumDownloaders-len(connections.peers))
 			launchClients(MaximumDownloaders-len(connections.peers), mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
 		}
-		log.Println("loop done")
 	}
 
 	log.Printf("saving %d pieces", results.PiecesDone)
