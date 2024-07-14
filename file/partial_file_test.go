@@ -2,6 +2,7 @@ package file
 
 import (
 	"bytes"
+	"io"
 	"testing"
 
 	"github.com/hojdars/bitflood/assert"
@@ -25,12 +26,17 @@ func TestPartialFileWrite(t *testing.T) {
 		},
 	}
 
-	var writer bytes.Buffer
+	writers := make([]bytes.Buffer, 1)
+	ws := make([]io.Writer, len(writers))
+	for i := range writers {
+		ws[i] = &writers[i]
+	}
 
-	err := WritePartialFile(data, &writer)
+	bitfield := bitfield.New(2)
+	err := WritePartialFiles(ws, data, &bitfield)
 	assert.IsError(t, err)
 
-	got := writer.Bytes()
+	got := writers[0].Bytes()
 	assert.Equal(t, len(got), 2*PieceByteLength)
 	assert.SliceEqual(t, got[0:PieceByteLength], []byte{0, 0, 0, 0, 0, 0, 0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0})
 	assert.SliceEqual(t, got[PieceByteLength:2*PieceByteLength], []byte{0, 0, 0, 1, 0, 0, 0, 10, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5})

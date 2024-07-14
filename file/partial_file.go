@@ -26,9 +26,27 @@ func ReadPartialFile(reader io.Reader, bitfield *bitfield.Bitfield) ([]types.Pie
 	return result, nil
 }
 
-func WritePartialFile(data []*types.Piece, writer io.Writer) error {
+func WritePartialFiles(writers []io.Writer, data []*types.Piece, savedPieces *bitfield.Bitfield) error {
 	for _, piece := range data {
-		_, err := writer.Write(piece.Serialize())
+		if piece == nil {
+			continue
+		}
+
+		alreadySaved, err := savedPieces.Get(piece.Index)
+		if err != nil {
+			return fmt.Errorf("error while verifying piece index in bitfield, err=%s", err)
+		}
+		if alreadySaved {
+			continue
+		}
+
+		fileIndex := piece.Index / 1000
+		if fileIndex >= len(writers) {
+			return fmt.Errorf("error while writing partial files, piece index %d requires part %d but only %d writers were provided",
+				piece.Index, fileIndex, len(writers))
+		}
+
+		_, err = writers[fileIndex].Write(piece.Serialize())
 		if err != nil {
 			return fmt.Errorf("error while writing partial file, err=%s", err)
 		}

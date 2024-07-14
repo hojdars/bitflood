@@ -3,6 +3,7 @@ bitfield.txt
 main
 
 *.part
+*.iso
 
 testdata/
 .vscode/

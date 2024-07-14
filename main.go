@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -101,34 +102,19 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.
 
 func savePartialFiles(torrent types.TorrentFile, results *types.Results, savedPieces *bitfield.Bitfield) error {
 	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
-	files := make([]*os.File, fileNumber)
+	writers := make([]io.Writer, fileNumber)
 	for i := 0; i < fileNumber; i += 1 {
 		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
 		fp, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 		if err != nil {
 			return fmt.Errorf("error while opening file=%s, err=%s", filename, err)
 		}
-		files[i] = fp
+		writers[i] = fp
 	}
 
-	for _, piece := range results.Pieces {
-		if piece == nil {
-			continue
-		}
-		alreadySaved, err := savedPieces.Get(piece.Index)
-		if err != nil {
-			return fmt.Errorf("error while verifying piece index in bitfield, err=%s", err)
-		}
-		if alreadySaved {
-			continue
-		}
-
-		fileIndex := piece.Index / 1000
-		bytes := piece.Serialize()
-		_, err = files[fileIndex].Write(bytes)
-		if err != nil {
-			return fmt.Errorf("error while writing piece id=%d, err=%s", piece.Index, err)
-		}
+	err := file.WritePartialFiles(writers, results.Pieces, savedPieces)
+	if err != nil {
+		return fmt.Errorf("error while writing partial files, err=%s", err)
 	}
 
 	return nil
@@ -491,12 +477,12 @@ func main() {
 
 	log.Printf("started on file=%s\n", filename)
 
-	file, err := os.Open(filename)
+	torrentFile, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("ERROR: cannot open file, err=%s", err)
 	}
 
-	torrent, err := decode.DecodeTorrentFile(file)
+	torrent, err := decode.DecodeTorrentFile(torrentFile)
 	if err != nil {
 		log.Fatalf("ERROR: encountered an error during .torrent file decoding, err=%s", err)
 	}
@@ -510,10 +496,13 @@ func main() {
 
 	// load the file or PartialFiles, verify all pieces hashes, create BitField
 	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
+
+	// TODO: load from complete file, set alreadySavedFinalFile if final file exists
 	err = loadPiecesFromPartialFiles(torrent, &results)
 	if err != nil {
 		log.Fatalf("ERROR: encountered an error while reading partial files, err=%s", err)
 	}
+	alreadySavedFinalFile := false
 	alreadySavedNumber := results.PiecesDone
 	alreadySavedPieces := bitfield.Copy(&results.Bitfield)
 
@@ -633,21 +622,28 @@ func main() {
 		if results.PiecesDone != len(torrent.PieceHashes) && len(connections.peers) < MaximumDownloaders {
 			launchClients(MaximumDownloaders-len(connections.peers), mainCtx, &torrent, sharedComms, &results, trackerInfo, &connections)
 		}
-	}
 
-	log.Printf("saving %d pieces", results.PiecesDone)
-
-	err = savePartialFiles(torrent, &results, &alreadySavedPieces)
-	if err != nil {
-		log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
-	}
-
-	// TODO [MVP]: If file is complete, write the complete file and not PartialFile
-	/*
-		if results.PiecesDone != len(torrent.PieceHashes) {
-		} else {
+		if results.PiecesDone == len(torrent.PieceHashes) && !alreadySavedFinalFile {
+			alreadySavedFinalFile = true
+			resultFile, err := os.Create(torrent.Name)
+			if err != nil {
+				log.Printf("ERROR: encountered error while writing result file, err=%s", err)
+			}
+			results.Lock.RLock()
+			file.Save(resultFile, results.Pieces)
+			results.Lock.RUnlock()
+			log.Printf("file saved, name=%s", torrent.Name)
 		}
-	*/
+	}
+
+	// if the partial files were incomplete at start, save them
+	if alreadySavedNumber < torrent.GetNumberOfPieces() {
+		log.Printf("saving %d pieces", results.PiecesDone)
+		err = savePartialFiles(torrent, &results, &alreadySavedPieces)
+		if err != nil {
+			log.Printf("ERROR: encountered error while saving partial files, err=%s", err)
+		}
+	}
 
 	os.Exit(0)
 }
