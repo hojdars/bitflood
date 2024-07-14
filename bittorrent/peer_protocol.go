@@ -22,7 +22,7 @@ type HandshakeData struct {
 }
 
 func AcceptConnection(conn net.Conn, torrent types.TorrentFile, results *types.Results, peerId string) (types.Peer, error) {
-	peer, err := acceptHandshake(conn)
+	peer, err := acceptHandshake(conn, torrent.InfoHash)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
@@ -46,7 +46,7 @@ func InitiateConnection(conn net.Conn, torrent types.TorrentFile, results *types
 		return types.Peer{}, fmt.Errorf("error while sending handshake to target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
 
-	peer, err := acceptHandshake(conn)
+	peer, err := acceptHandshake(conn, torrent.InfoHash)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
@@ -59,13 +59,15 @@ func InitiateConnection(conn net.Conn, torrent types.TorrentFile, results *types
 	return peer, nil
 }
 
-func acceptHandshake(conn net.Conn) (types.Peer, error) {
+func acceptHandshake(conn net.Conn, infoHash [20]byte) (types.Peer, error) {
 	inHandshake, err := deserializeHandshake(conn)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
 
-	// TODO: Verify info-hash in 'inHadshake'
+	if inHandshake.InfoHash != infoHash {
+		return types.Peer{}, fmt.Errorf("handshake refused, got incorrect info-hash, got=%v, wanted=%v", inHandshake.InfoHash, infoHash)
+	}
 
 	return types.Peer{
 		Downloaded:     0,
