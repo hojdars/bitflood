@@ -85,8 +85,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 	var seedState seederState
 
 	for {
-		// TODO:
-		// if should send keep alive, send keep alive
+		// TODO: send keep alive
 
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 		if !peer.Choking && peer.Interested && len(seedState.requested) > 0 {

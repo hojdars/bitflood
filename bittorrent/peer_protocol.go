@@ -65,6 +65,8 @@ func acceptHandshake(conn net.Conn) (types.Peer, error) {
 		return types.Peer{}, fmt.Errorf("error getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
 
+	// TODO: Verify info-hash in 'inHadshake'
+
 	return types.Peer{
 		Downloaded:     0,
 		ChokedBy:       true,

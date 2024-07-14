@@ -36,6 +36,7 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 
 	for {
 		conn, err := listener.Accept()
+		log.Printf("incoming connection, addr=%s", conn.RemoteAddr().String())
 		if err != nil {
 			log.Printf("ERROR: accept failed, err=%s", err)
 			continue
@@ -575,8 +576,10 @@ func main() {
 			results.Lock.Lock()
 			piecesDone := results.PiecesDone
 			results.Lock.Unlock()
-			piecePercent := 100.0 * float32(piecesDone) / float32(len(torrent.PieceHashes))
-			log.Printf("downloaded %d/%d pieces, %f%%, uploaded %d pieces", piecesDone, len(torrent.PieceHashes), piecePercent, uploadedPieces)
+			if piecesDone != len(torrent.PieceHashes) {
+				piecePercent := 100.0 * float32(piecesDone) / float32(len(torrent.PieceHashes))
+				log.Printf("downloaded %d/%d pieces, %f%%, uploaded %d pieces", piecesDone, len(torrent.PieceHashes), piecePercent, uploadedPieces)
+			}
 		case piece := <-sharedComms.Results:
 			results.Lock.Lock()
 			results.Pieces[piece.Index] = piece
