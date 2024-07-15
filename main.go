@@ -557,8 +557,7 @@ func main() {
 		Uploaded:        make(chan int, len(trackerInfo.IPs)+50),
 	}
 
-	// TODO: The order of piece downloads should be random
-	for r := 0; r < torrent.GetNumberOfPieces(); r += 1 {
+	for _, r := range rand.Perm(torrent.GetNumberOfPieces()) {
 		have, err := results.Bitfield.Get(r)
 		if err != nil {
 			log.Fatalf("ERROR: encountered error while checking bitfield, err=%s", err)
