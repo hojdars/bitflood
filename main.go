@@ -29,6 +29,7 @@ import (
 
 const ConnectionBlacklistDuration = time.Second * 60
 const ChokeAlgorithmTick int = 10
+const LogFile = "testdata/log/all.log"
 const MaximumDownloaders = 20
 const Port uint16 = 6881
 
@@ -509,9 +510,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	f, err := os.OpenFile("testdata/log/all.log", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	f, err := os.OpenFile(LogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
-		fmt.Printf("error opening 'all.log', err=%s", err)
+		fmt.Printf("error opening '%s', err=%s", LogFile, err)
 		os.Exit(1)
 	}
 
