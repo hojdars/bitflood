@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math/rand"
 	"net"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/hojdars/bitflood/client"
 	"github.com/hojdars/bitflood/decode"
 	"github.com/hojdars/bitflood/file"
+	"github.com/hojdars/bitflood/logging"
 	"github.com/hojdars/bitflood/types"
 )
 
@@ -503,16 +505,36 @@ func chokeAlgorithm(generosity map[string]int, interest map[string]bool) []strin
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatalf("ERROR: invalid number of arguments, expected 2, got %v", len(os.Args))
+		fmt.Printf("invalid number of arguments, expected 2, got %v", len(os.Args))
+		os.Exit(1)
 	}
 
-	filename := os.Args[1]
+	f, err := os.OpenFile("testdata/log/all.log", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	if err != nil {
+		fmt.Printf("error opening 'all.log', err=%s", err)
+		os.Exit(1)
+	}
 
+	logWriter := io.MultiWriter(f, os.Stderr)
+
+	logOptions := &slog.HandlerOptions{
+		Level:       slog.LevelInfo,
+		AddSource:   false,
+		ReplaceAttr: nil,
+	}
+
+	prettyHandler := logging.New(logOptions, logging.WithColor(), logging.WithDestinationWriter(logWriter))
+	logger := slog.New(prettyHandler)
+	slog.SetDefault(logger)
+
+	filename := os.Args[1]
 	if _, err := os.Stat(filename); err != nil {
 		log.Fatalf("ERROR: file does not exist, file=%s", filename)
 	}
 
-	log.Printf("started on file=%s\n", filename)
+	slog.Info("started", "file", filename)
+
+	// log.Printf("started on file=%s\n", filename)
 
 	torrentFile, err := os.Open(filename)
 	if err != nil {
@@ -524,12 +546,17 @@ func main() {
 		log.Fatalf("ERROR: encountered an error during .torrent file decoding, err=%s", err)
 	}
 
+	fmt.Println("10%")
+
 	if torrent.Length == 0 {
 		// TODO: specification requires either 'length' or 'key files', implement 'key files'
 		log.Fatalf("ERROR: key 'length' is missing, unsupported .torrent file")
 	}
 
-	log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
+	slog.Info("torrent file decoded", slog.String("file", torrent.Name), slog.String("size", humanize.Bytes(uint64(torrent.Length))), slog.Int("pieces", len(torrent.PieceHashes)))
+	// log.Printf("torrent file=%s, size=%s, pieces=%d", torrent.Name, humanize.Bytes(uint64(torrent.Length)), len(torrent.PieceHashes))
+
+	os.Exit(0)
 
 	// load the file or PartialFiles, verify all pieces hashes, create BitField
 	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
