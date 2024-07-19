@@ -28,6 +28,7 @@ import (
 const ConnectionBlacklistDuration = time.Second * 60
 const ChokeAlgorithmTick int = 10
 const MaximumDownloaders = 20
+const LogFile = "testdata/log/all.log"
 const Port uint16 = 6881
 
 func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, conns *Connections) {
@@ -503,8 +504,18 @@ func chokeAlgorithm(generosity map[string]int, interest map[string]bool) []strin
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatalf("ERROR: invalid number of arguments, expected 2, got %v", len(os.Args))
+		fmt.Printf("invalid number of arguments, expected 2, got %v", len(os.Args))
+		os.Exit(1)
 	}
+
+	f, err := os.OpenFile(LogFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	if err != nil {
+		fmt.Printf("error opening '%s', err=%s", LogFile, err)
+		os.Exit(1)
+	}
+
+	logWriter := io.MultiWriter(f, os.Stderr)
+	log.SetOutput(logWriter)
 
 	filename := os.Args[1]
 
