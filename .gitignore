@@ -2,6 +2,7 @@ bitflood
 bitfield.txt
 main
 
+*.log
 *.part
 *.iso
 
