@@ -6,8 +6,9 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
+	"os"
 
 	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/bittorrent"
@@ -18,54 +19,59 @@ const PipelineLength int = 5
 const ChunkSize int = 1 << 14
 
 func Seed(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
-	log.Printf("INFO: started seeding to target=%s", conn.RemoteAddr().String())
+	slog.Info("started seeding to target", slog.String("target", conn.RemoteAddr().String()))
 	defer conn.Close()
 
 	peerIdOptional := ctx.Value("peer-id")
 	if peerIdOptional == nil {
-		log.Fatalf("ERROR: context is missing value")
+		slog.Error("conext is missing the 'peer-id' value")
+		os.Exit(0)
 	}
 	peerId, ok := peerIdOptional.(string)
 	if !ok {
-		log.Fatalf("ERROR: context does not contain a string")
+		slog.Error("'peer-id' value in conext is not a string")
+		os.Exit(0)
 	}
 
 	peer, err := bittorrent.AcceptConnection(conn, *torrent, results, peerId)
 	if err != nil {
-		log.Printf("ERROR: error accepting bittorrent connection from target=%s", conn.RemoteAddr().String())
+		slog.Error("error accepting bittorrent connection", slog.String("target", conn.RemoteAddr().String()), slog.String("err", err.Error()))
 		comms.ConnectionEnded <- types.ConnectionEnd{Id: "unknown", Addr: conn.RemoteAddr()}
 		return
 	}
 
-	log.Printf("INFO  [%s]: handshake complete", peer.ID)
 	communicationLoop(ctx, conn, torrent, &peer, comms, results)
 }
 
 func Leech(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, comms types.Communication, results *types.Results) {
-	log.Printf("INFO: started leeching from target=%s", conn.RemoteAddr().String())
+	slog.Info("started leeching from target", slog.String("target", conn.RemoteAddr().String()))
 	defer conn.Close()
 
 	peerIdOptional := ctx.Value("peer-id")
 	if peerIdOptional == nil {
-		log.Fatalf("ERROR: context is missing value")
+		slog.Error("conext is missing the 'peer-id' value")
+		os.Exit(0)
 	}
 	peerId, ok := peerIdOptional.(string)
 	if !ok {
-		log.Fatalf("ERROR: context does not contain a string")
+		slog.Error("'peer-id' value in conext is not a string")
+		os.Exit(0)
 	}
 
 	peer, err := bittorrent.InitiateConnection(conn, *torrent, results, peerId)
 	if err != nil {
-		log.Printf("ERROR: error initiating bittorrent connection to target=%s, err=%s", conn.RemoteAddr().String(), err)
+		slog.Error("error initiating bittorrent connection", slog.String("target", conn.RemoteAddr().String()), slog.String("err", err.Error()))
 		comms.ConnectionEnded <- types.ConnectionEnd{Id: "unknown", Addr: conn.RemoteAddr()}
 		return
 	}
 
-	log.Printf("INFO  [%s]: handshake complete with addr=%s", peer.ID, peer.Addr)
 	communicationLoop(ctx, conn, torrent, &peer, comms, results)
 }
 
 func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.TorrentFile, peer *types.Peer, comms types.Communication, results *types.Results) {
+	logger := slog.With(slog.String("peer-id", peer.ID))
+	logger.Info("handshake complete", slog.String("addr", peer.Addr.String()))
+
 	msgChannel := make(chan bittorrent.PeerMessage)
 
 	// goroutine to accept incoming messages from TCP
@@ -73,7 +79,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		for {
 			msg, err := bittorrent.DeserializeMessage(conn)
 			if err != nil {
-				log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", peer.ID, peer.Addr.String(), err)
+				logger.Error("error while receiving message", slog.String("target", peer.Addr.String()), slog.String("err", err.Error()))
 				close(msgChannel)
 				return
 			}
@@ -89,10 +95,10 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 		if !peer.Choking && peer.Interested && len(seedState.requested) > 0 {
-			log.Printf("INFO  [%s]: uploading to peer", peer.ID)
+			logger.Info("uploading to peer")
 			uploadedIndex, err := uploadChunk(conn, *peer, results, &seedState)
 			if err != nil {
-				log.Printf("ERROR [%s]: error while uploading a chunk, err=%s", peer.ID, err)
+				logger.Error("error while uploading a chunk", slog.String("err", err.Error()))
 			} else {
 				seedState.requested[uploadedIndex] = seedState.requested[len(seedState.requested)-1]
 				seedState.requested = seedState.requested[:len(seedState.requested)-1]
@@ -103,7 +109,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		if progress.order != nil && progress.numDone == progress.order.Length {
 			err := handlePieceComplete(conn, &progress, peer, comms)
 			if err != nil {
-				log.Printf("ERROR [%s]: error while handling a completed piece, err=%s", peer.ID, err)
+				logger.Error("error while handling a completed piece", slog.String("err", err.Error()))
 			} else {
 				// piece is done -> progress is reset
 				progress = pieceProgress{}
@@ -121,7 +127,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// if we are interested but choked, send 'interested'
 		if progress.order != nil && peer.ChokedBy && !peer.InterestedSent {
 			sendInterested(peer, conn)
-			log.Printf("INFO  [%s]: sent interested message", peer.ID)
+			logger.Info("sent interested message")
 		}
 
 		// if should be requesting (= I am interested AND peer is unchoking me AND not enough requests are pipelined), send the requests
@@ -132,7 +138,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		// after this is done, block on context.Done or message incoming
 		select {
 		case <-ctx.Done():
-			log.Printf("INFO  [%s]: seeder closed (addr=%s)", peer.ID, peer.Addr)
+			logger.Info("seeder closed", slog.String("addr", peer.Addr.String()))
 			if progress.order != nil {
 				comms.Orders <- progress.order
 			}
@@ -140,7 +146,7 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			return
 		case msg, ok := <-msgChannel:
 			if !ok {
-				log.Printf("INFO  [%s]: connection to target=%s lost", peer.ID, peer.Addr.String())
+				logger.Info("connection lost", slog.String("target", peer.Addr.String()))
 				if progress.order != nil {
 					comms.Orders <- progress.order
 				}
@@ -150,15 +156,14 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			if msg.KeepAlive {
 				continue
 			}
-			// log.Printf("INFO  [%s]: received message=%s from target=%s", peer.ID, bittorrent.CodeToString(msg.Code), peer.Addr)
 
 			err := handleMessage(msg, peer, &progress, *torrent, comms, &seedState)
 			if err != nil {
-				log.Printf("ERROR [%s]: error while handling message, err=%s", peer.ID, err)
+				logger.Error("error while handling message", slog.String("err", err.Error()))
 			}
 		case unchokedPeers, ok := <-comms.PeersToUnchoke:
 			if !ok {
-				log.Printf("ERROR [%s]: unchoke channel to main lost, seeder exiting", peer.ID)
+				logger.Error("unchoke channel to main lost, seeder exiting")
 				if progress.order != nil {
 					comms.Orders <- progress.order
 				}
@@ -174,10 +179,10 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 			}
 			if peerIncluded {
 				peer.Choking = false
-				log.Printf("INFO  [%s]: unchoking", peer.ID)
+				logger.Info("unchoking")
 			} else {
 				if !peer.Choking { // only print the 'choking' message if we are currently not choking
-					log.Printf("INFO  [%s]: choking", peer.ID)
+					logger.Info("choking")
 				}
 				peer.Choking = true
 			}
@@ -226,7 +231,7 @@ func getPiece(peer types.Peer, workQueue chan *types.PieceOrder) *types.PieceOrd
 		}
 		got, err := peer.Bitfield.Get(order.Index)
 		if err != nil {
-			log.Printf("ERROR [%s]: error querying bitfield for piece, index=%d, err=%s", peer.ID, order.Index, err)
+			slog.Error("error while handling a completed piece", slog.String("peer-id", peer.ID), slog.Int("index", order.Index), slog.String("err", err.Error()))
 			workQueue <- order
 			return nil
 		}
@@ -244,12 +249,12 @@ func sendInterested(peer *types.Peer, conn net.Conn) {
 	msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgInterested, Data: []byte{}}
 	msgData, err := bittorrent.SerializeMessage(msg)
 	if err != nil {
-		log.Printf("ERROR [%s]: error while serializing 'interested' message, err=%s", peer.ID, err)
+		slog.Error("error while serializing 'interested' message", slog.String("peer-id", peer.ID), slog.String("err", err.Error()))
 		return
 	}
 	_, err = conn.Write(msgData)
 	if err != nil {
-		log.Printf("ERROR [%s]: error while sending 'interested' message, err=%s", peer.ID, err)
+		slog.Error("error while sending 'interested' message", slog.String("peer-id", peer.ID), slog.String("err", err.Error()))
 		return
 	}
 	peer.InterestedSent = true
@@ -273,12 +278,12 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 		// TODO: technically, we can create the requests in this thread and then launch goroutine to send them
 		reqByte, err := bittorrent.SerializeMessage(msg)
 		if err != nil {
-			log.Printf("ERROR [%s]: error while serializing request message, err=%s", peer.ID, err)
+			slog.Error("error while serializing request message", slog.String("peer-id", peer.ID), slog.String("err", err.Error()))
 			break
 		}
 		_, err = conn.Write(reqByte)
 		if err != nil {
-			log.Printf("ERROR [%s]: error while sending request message, err=%s", peer.ID, err)
+			slog.Error("error while sending request message", slog.String("peer-id", peer.ID), slog.String("err", err.Error()))
 			break
 		}
 
@@ -291,7 +296,7 @@ func fillRequests(peer types.Peer, conn net.Conn, progress *pieceProgress) {
 func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Peer, comms types.Communication) error {
 	hash := sha1.Sum(progress.buf)
 	if !bytes.Equal(hash[:], progress.order.Hash[:]) {
-		log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, progress.order.Index)
+		slog.Error("hash mismatch for piece", slog.String("peer-id", peer.ID), slog.Int("piece", progress.order.Index))
 		comms.Orders <- progress.order
 		return nil
 	}
@@ -326,25 +331,27 @@ func handlePieceComplete(conn net.Conn, progress *pieceProgress, peer *types.Pee
 }
 
 func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *pieceProgress, torrent types.TorrentFile, comms types.Communication, seedState *seederState) error {
+	logger := slog.With(slog.String("peer-id", peer.ID))
+
 	switch msg.Code {
 	case bittorrent.MsgChoke:
-		log.Printf("INFO  [%s]: choked", peer.ID)
+		logger.Info("choked")
 		peer.ChokedBy = true
 		peer.InterestedSent = false
 	case bittorrent.MsgUnchoke:
-		log.Printf("INFO  [%s]: unchoked", peer.ID)
+		logger.Info("unchoked")
 		peer.ChokedBy = false
 	case bittorrent.MsgInterested:
 		peer.Interested = true
 		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: true}
-		log.Printf("INFO  [%s]: peer is interested", peer.ID)
+		logger.Info("peer is interested")
 	case bittorrent.MsgNotInterested:
 		peer.Interested = false
 		comms.PeerInterested <- types.PeerInterest{Id: peer.ID, IsInterested: false}
-		log.Printf("INFO  [%s]: peer is not interested", peer.ID)
+		logger.Info("peer is not interested")
 	case bittorrent.MsgHave:
 		pieceIndex := int(binary.BigEndian.Uint32(msg.Data))
-		log.Printf("INFO  [%s]: peer confirmed upload of piece index=%d", peer.ID, pieceIndex)
+		logger.Info("peer confirmed upload of piece", slog.Int("index", pieceIndex))
 		comms.Uploaded <- pieceIndex
 		return nil
 	case bittorrent.MsgBitfield:
@@ -356,7 +363,7 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 			return fmt.Errorf("invalid bitfield length, received %d bytes, required %d bytes", len(msg.Data), expectedLength)
 		}
 		peer.Bitfield = bitfield.FromBytes(msg.Data, len(torrent.PieceHashes))
-		log.Printf("INFO  [%s]: received bitfield", peer.ID)
+		logger.Info("received bitfield")
 	case bittorrent.MsgRequest:
 		index, start, length, err := msg.DeserializeRequestMsg()
 		if err != nil {

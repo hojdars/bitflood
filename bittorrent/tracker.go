@@ -3,7 +3,7 @@ package bittorrent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -32,7 +32,7 @@ func GetTrackerFromFile(torrent types.TorrentFile, peerId string, port uint16, u
 		result, err := getPeers(tracker)
 
 		if err != nil {
-			log.Printf("encoutered error, err=%s", err)
+			slog.Error("error while contacting tracker", slog.String("tracker", tracker.url.String()), slog.String("err", err.Error()))
 			tier = tracker.tier
 			tierPos += tracker.tierIndex + 1
 			continue
@@ -40,7 +40,7 @@ func GetTrackerFromFile(torrent types.TorrentFile, peerId string, port uint16, u
 			// TODO: According to BEP:12, we should re-order the 'announce-list'
 			result.Tracker = tracker.url
 			result.Tracker.RawQuery = ""
-			log.Printf("choosing tracker url=%s", tracker.url.String())
+			slog.Debug("choosen tracker", slog.String("url", tracker.url.String()))
 			return result, nil
 		}
 	}
@@ -84,7 +84,7 @@ func getFirstSupportedTracker(torrent types.TorrentFile, startTier, startTierPos
 		for t := start; t < len(torrent.AnnounceList[i]); t += 1 {
 			announceUrl, err := url.Parse(torrent.AnnounceList[i][t])
 			if err != nil {
-				log.Printf("WARNING: could not parse announcer URL=%s", torrent.AnnounceList[i][t])
+				slog.Warn("could not parse announcer URL", slog.String("url", torrent.AnnounceList[i][t]))
 				continue
 			}
 			if announceUrl.Scheme == "http" {
@@ -111,7 +111,7 @@ func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, peerId str
 
 func getPeers(tracker Tracker) (types.TrackerInformation, error) {
 	timeout := time.Millisecond * 500
-	log.Printf("requesting peer information from tracker, timeout=%d", timeout.Milliseconds())
+	slog.Debug("requesting peer information from tracker", slog.Int("timeout", int(timeout.Milliseconds())))
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
