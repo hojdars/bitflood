@@ -3,11 +3,9 @@ package logging
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,25 +59,19 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 	return &Handler{h: h.h.WithGroup(name), b: h.b, r: h.r, m: h.m, writer: h.writer, colorize: h.colorize}
 }
 
-func (h *Handler) computeAttrs(
-	ctx context.Context,
-	r slog.Record,
-) (map[string]any, error) {
+func (h *Handler) computeAttrs(ctx context.Context, r slog.Record) (string, error) {
 	h.m.Lock()
+
 	defer func() {
 		h.b.Reset()
 		h.m.Unlock()
 	}()
+
 	if err := h.h.Handle(ctx, r); err != nil {
-		return nil, fmt.Errorf("error when calling inner handler's Handle: %w", err)
+		return "", fmt.Errorf("error when calling inner handler's Handle: %w", err)
 	}
 
-	var attrs map[string]any
-	err := json.Unmarshal(h.b.Bytes(), &attrs)
-	if err != nil {
-		return nil, fmt.Errorf("error when unmarshaling inner handler's Handle result: %w", err)
-	}
-	return attrs, nil
+	return string(h.b.Bytes()), nil
 }
 
 func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
@@ -145,10 +137,6 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	if err != nil {
 		return err
 	}
-	bytes, err := json.MarshalIndent(attrs, "", "  ")
-	if err != nil {
-		return fmt.Errorf("error when marshaling attrs: %w", err)
-	}
 
 	out := strings.Builder{}
 	if len(timestamp) > 0 {
@@ -163,11 +151,11 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		out.WriteString(msg)
 		out.WriteString(" ")
 	}
-	if len(bytes) > 2 {
-		out.WriteString(colorize(darkGray, string(bytes)))
+	if len(attrs) > 0 {
+		out.WriteString(colorize(darkGray, string(attrs)))
 	}
 
-	_, err = io.WriteString(h.writer, out.String()+"\n")
+	_, err = io.WriteString(h.writer, out.String())
 	if err != nil {
 		return err
 	}
@@ -199,7 +187,7 @@ func New(handlerOptions *slog.HandlerOptions, options ...Option) *Handler {
 	buf := &bytes.Buffer{}
 	handler := &Handler{
 		b: buf,
-		h: slog.NewJSONHandler(buf, &slog.HandlerOptions{
+		h: slog.NewTextHandler(buf, &slog.HandlerOptions{
 			Level:       handlerOptions.Level,
 			AddSource:   handlerOptions.AddSource,
 			ReplaceAttr: suppressDefaults(handlerOptions.ReplaceAttr),
@@ -213,10 +201,6 @@ func New(handlerOptions *slog.HandlerOptions, options ...Option) *Handler {
 	}
 
 	return handler
-}
-
-func NewHandler(opts *slog.HandlerOptions) *Handler {
-	return New(opts, WithDestinationWriter(os.Stdout), WithColor())
 }
 
 type Option func(h *Handler)
