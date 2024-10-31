@@ -178,11 +178,15 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 				}
 			}
 			if peerIncluded {
+				if peer.Choking { // only send 'unchoke' message if we are currently choking
+					logger.Info("unchoking")
+					sendChokeChangeMessage(false, peer, conn)
+				}
 				peer.Choking = false
-				logger.Info("unchoking")
 			} else {
-				if !peer.Choking { // only print the 'choking' message if we are currently not choking
+				if !peer.Choking { // only send 'choke' message if we are currently not choking
 					logger.Info("choking")
+					sendChokeChangeMessage(true, peer, conn)
 				}
 				peer.Choking = true
 			}
@@ -393,4 +397,24 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		return nil
 	}
 	return nil
+}
+
+func sendChokeChangeMessage(choking bool, peer *types.Peer, conn net.Conn) {
+	var code byte
+	if choking {
+		code = bittorrent.MsgChoke
+	} else {
+		code = bittorrent.MsgUnchoke
+	}
+	msg := bittorrent.PeerMessage{KeepAlive: false, Code: code, Data: []byte{}}
+	msgData, err := bittorrent.SerializeMessage(msg)
+	if err != nil {
+		slog.Error("error while serializing 'choke/unchoke' message", slog.String("peer-id", peer.ID), slog.String("err", err.Error()))
+		return
+	}
+	_, err = conn.Write(msgData)
+	if err != nil {
+		slog.Error("error while sending 'choke/unchoke' message", slog.String("peer-id", peer.ID), slog.String("err", err.Error()))
+		return
+	}
 }
