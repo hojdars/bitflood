@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"net"
@@ -16,6 +18,7 @@ import (
 
 const BitFieldLength = 315
 const TargetPort = 6881
+const ChunkSize int = 1 << 14
 
 func main() {
 
@@ -63,7 +66,7 @@ func main() {
 	// actAsSeed(conn, &peer)
 
 	// act as leech
-	actAsLeech(conn, &peer)
+	actAsLeech(conn, &peer, torrent)
 }
 
 func actAsSeed(conn net.Conn, peer *types.Peer) {
@@ -82,7 +85,7 @@ func actAsSeed(conn net.Conn, peer *types.Peer) {
 	loopReceive(conn, peer.ID)
 }
 
-func actAsLeech(conn net.Conn, peer *types.Peer) {
+func actAsLeech(conn net.Conn, peer *types.Peer, torrent types.TorrentFile) {
 	log.Printf("acting as leech")
 	sendMessage(conn, bittorrent.MsgInterested, []byte{})
 
@@ -100,6 +103,51 @@ func actAsLeech(conn net.Conn, peer *types.Peer) {
 	}
 
 	log.Printf("INFO  [%s]: starting requests", peer.ID)
+
+	pieceIndex := 0
+	pieceData := make([]byte, torrent.PieceLength)
+	pieceNextRequest := 0
+	for {
+		length := min(ChunkSize, torrent.PieceLength-pieceNextRequest)
+		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
+		msg.SerializeRequestMsg(pieceIndex, pieceNextRequest, length)
+
+		msgData, err := bittorrent.SerializeMessage(msg)
+		if err != nil {
+			log.Printf("ERROR: failed to serialize bitfield")
+			return
+		}
+		conn.Write(msgData)
+		log.Printf("INFO  [%s]: sent request %d,%d,%d", peer.ID, pieceIndex, pieceNextRequest, length)
+
+		msg, err = bittorrent.DeserializeMessage(conn)
+		if err != nil {
+			log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", peer.ID, conn.RemoteAddr().String(), err)
+		}
+		log.Printf("INFO  [%s]: received message, code=%d", peer.ID, msg.Code)
+
+		if msg.Code == bittorrent.MsgPiece {
+			index, begin, data, err := msg.DeserializePieceMsg()
+			if err != nil {
+				log.Printf("ERROR [%s]: error while receiving piece message from target=%s, err=%s", peer.ID, conn.RemoteAddr().String(), err)
+			}
+			log.Printf("INFO  [%s]: got 'piece' message, index=%d, begin=%d, data-len=%d", peer.ID, index, begin, len(data))
+			copy(pieceData[begin:], data)
+			pieceNextRequest = pieceNextRequest + len(data)
+		}
+
+		if pieceNextRequest >= torrent.PieceLength {
+			break
+		}
+	}
+
+	log.Printf("INFO  [%s]: piece complete, verifying hash", peer.ID)
+	hash := sha1.Sum(pieceData)
+	if !bytes.Equal(hash[:], torrent.PieceHashes[pieceIndex][:]) {
+		log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, pieceIndex)
+	} else {
+		log.Printf("INFO  [%s]: hash verification OK", peer.ID)
+	}
 }
 
 func loopReceive(conn net.Conn, remotePeerId string) {
@@ -120,10 +168,13 @@ func receiveMessage(conn net.Conn, remotePeerId string) {
 		if err != nil {
 			log.Printf("ERROR [%s]: error while deserializing request message from target=%s, err=%s", remotePeerId, conn.RemoteAddr().String(), err)
 		}
-		log.Printf("received request, index=%d, begin=%d, len=%d", index, begin, len)
+		log.Printf("INFO  [%s]: received request, index=%d, begin=%d, len=%d", remotePeerId, index, begin, len)
 	}
 	if msg.Code == bittorrent.MsgInterested {
-		log.Printf("got 'interested' message")
+		log.Printf("INFO  [%s]: got 'interested' message", remotePeerId)
+	}
+	if msg.Code == bittorrent.MsgPiece {
+		log.Printf("INFO  [%s]: got 'piece' message", remotePeerId)
 	}
 }
 
