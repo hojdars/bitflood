@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/bittorrent"
+	"github.com/hojdars/bitflood/decode"
 	"github.com/hojdars/bitflood/types"
 )
 
-const BitFieldLength = 316
+const BitFieldLength = 315
 const TargetPort = 6881
 
 func main() {
@@ -20,8 +22,14 @@ func main() {
 	peerId := bittorrent.MakePeerId()
 	log.Printf("starting with peer-id=%s", peerId)
 
-	torrent := types.TorrentFile{
-		InfoHash: [20]byte([]byte("aabbccddeeffgghhiijj")),
+	filename := "/home/ashen/go/projects/bitflood/testdata/debian-12.5.0-amd64-netinst.iso.torrent"
+	torrentFile, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("error opening torrent file")
+	}
+	torrent, err := decode.DecodeTorrentFile(torrentFile)
+	if err != nil {
+		log.Fatalf("error decoding torrent file")
 	}
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", TargetPort))
@@ -38,11 +46,10 @@ func main() {
 
 	log.Printf("received correct handshake from target=%s, peer-id=%s", conn.RemoteAddr().String(), peer.ID)
 
-	log.Println("sending full bitfield")
-
+	log.Println("sending empty bitfield")
 	bitfield := make([]byte, BitFieldLength)
 	for i := range bitfield {
-		bitfield[i] = 255
+		bitfield[i] = 0
 	}
 	msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgBitfield, Data: bitfield}
 	msgData, err := bittorrent.SerializeMessage(msg)
@@ -52,12 +59,20 @@ func main() {
 	}
 	conn.Write(msgData)
 
+	// act as seeder
+	// actAsSeed(conn, &peer)
+
+	// act as leech
+	actAsLeech(conn, &peer)
+}
+
+func actAsSeed(conn net.Conn, peer *types.Peer) {
 	// wait for interested
 	receiveMessage(conn, peer.ID)
 
 	log.Println("sending unchoke")
-	msg = bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgUnchoke, Data: []byte{}}
-	msgData, err = bittorrent.SerializeMessage(msg)
+	msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgUnchoke, Data: []byte{}}
+	msgData, err := bittorrent.SerializeMessage(msg)
 	if err != nil {
 		log.Printf("ERROR: failed to serialize bitfield")
 		return
@@ -65,6 +80,26 @@ func main() {
 	conn.Write(msgData)
 
 	loopReceive(conn, peer.ID)
+}
+
+func actAsLeech(conn net.Conn, peer *types.Peer) {
+	log.Printf("acting as leech")
+	sendMessage(conn, bittorrent.MsgInterested, []byte{})
+
+	for {
+		msg, err := bittorrent.DeserializeMessage(conn)
+		if err != nil {
+			log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", peer.ID, conn.RemoteAddr().String(), err)
+		}
+		log.Printf("INFO  [%s]: received message, code=%d", peer.ID, msg.Code)
+
+		if msg.Code == bittorrent.MsgUnchoke {
+			log.Printf("INFO  [%s]: got unchoke message", peer.ID)
+			break
+		}
+	}
+
+	log.Printf("INFO  [%s]: starting requests", peer.ID)
 }
 
 func loopReceive(conn net.Conn, remotePeerId string) {
@@ -90,6 +125,16 @@ func receiveMessage(conn net.Conn, remotePeerId string) {
 	if msg.Code == bittorrent.MsgInterested {
 		log.Printf("got 'interested' message")
 	}
+}
+
+func sendMessage(conn net.Conn, code byte, data []byte) {
+	msg := bittorrent.PeerMessage{KeepAlive: false, Code: code, Data: data}
+	msgData, err := bittorrent.SerializeMessage(msg)
+	if err != nil {
+		log.Printf("ERROR: failed to serialize bitfield")
+		return
+	}
+	conn.Write(msgData)
 }
 
 func loopSend(conn net.Conn) {
