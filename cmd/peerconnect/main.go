@@ -107,20 +107,26 @@ func actAsLeech(conn net.Conn, peer *types.Peer, torrent types.TorrentFile) {
 	pieceIndex := 0
 	pieceData := make([]byte, torrent.PieceLength)
 	pieceNextRequest := 0
+	numberOfRequests := 0
+
 	for {
-		length := min(ChunkSize, torrent.PieceLength-pieceNextRequest)
-		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
-		msg.SerializeRequestMsg(pieceIndex, pieceNextRequest, length)
+		for numberOfRequests < 5 && pieceNextRequest < torrent.PieceLength {
+			length := min(ChunkSize, torrent.PieceLength-pieceNextRequest)
+			msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgRequest}
+			msg.SerializeRequestMsg(pieceIndex, pieceNextRequest, length)
 
-		msgData, err := bittorrent.SerializeMessage(msg)
-		if err != nil {
-			log.Printf("ERROR: failed to serialize bitfield")
-			return
+			msgData, err := bittorrent.SerializeMessage(msg)
+			if err != nil {
+				log.Printf("ERROR: failed to serialize bitfield")
+				return
+			}
+			conn.Write(msgData)
+			log.Printf("INFO  [%s]: sent request %d,%d,%d", peer.ID, pieceIndex, pieceNextRequest, length)
+			pieceNextRequest = pieceNextRequest + length
+			numberOfRequests += 1
 		}
-		conn.Write(msgData)
-		log.Printf("INFO  [%s]: sent request %d,%d,%d", peer.ID, pieceIndex, pieceNextRequest, length)
 
-		msg, err = bittorrent.DeserializeMessage(conn)
+		msg, err := bittorrent.DeserializeMessage(conn)
 		if err != nil {
 			log.Printf("ERROR [%s]: error while receiving message from target=%s, err=%s", peer.ID, conn.RemoteAddr().String(), err)
 		}
@@ -133,10 +139,10 @@ func actAsLeech(conn net.Conn, peer *types.Peer, torrent types.TorrentFile) {
 			}
 			log.Printf("INFO  [%s]: got 'piece' message, index=%d, begin=%d, data-len=%d", peer.ID, index, begin, len(data))
 			copy(pieceData[begin:], data)
-			pieceNextRequest = pieceNextRequest + len(data)
+			numberOfRequests -= 1
 		}
 
-		if pieceNextRequest >= torrent.PieceLength {
+		if pieceNextRequest >= torrent.PieceLength && numberOfRequests == 0 {
 			break
 		}
 	}
