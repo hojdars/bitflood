@@ -199,16 +199,22 @@ func uploadChunk(conn net.Conn, peer types.Peer, results *types.Results, seedSta
 		return -1, fmt.Errorf("cannot upload chunk, no requests pending")
 	}
 
-	request := 0
-
 	msg := bittorrent.PeerMessage{
 		KeepAlive: false,
 		Code:      bittorrent.MsgPiece,
 	}
 
-	pieceIndex := seedState.requested[request].index
-	pieceStart := seedState.requested[request].start
-	pieceLength := seedState.requested[request].length
+	// index '0' means 'take the first request made (FIFO)
+	pieceIndex := seedState.requested[0].index
+	pieceStart := seedState.requested[0].start
+	pieceLength := seedState.requested[0].length
+
+	if pieceIndex >= len(results.Pieces) {
+		return -1, fmt.Errorf("ERROR [%s]: requested piece number %d does not exist", peer.ID, pieceIndex)
+	}
+	if pieceStart+pieceLength > len(results.Pieces[pieceIndex].Data) {
+		return -1, fmt.Errorf("ERROR [%s]: requested data out of bounds, requested data until %dB, piece is only %dB", peer.ID, pieceStart+pieceLength, len(results.Pieces[pieceIndex].Data))
+	}
 
 	results.Lock.RLock()
 	data := results.Pieces[pieceIndex].Data[pieceStart : pieceStart+pieceLength]
@@ -224,7 +230,7 @@ func uploadChunk(conn net.Conn, peer types.Peer, results *types.Results, seedSta
 		return -1, fmt.Errorf("ERROR [%s]: error while sending 'piece' message, err=%s", peer.ID, err)
 	}
 
-	return request, nil
+	return 0, nil
 }
 
 func getPiece(peer types.Peer, workQueue chan *types.PieceOrder) *types.PieceOrder {
