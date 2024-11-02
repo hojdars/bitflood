@@ -51,6 +51,7 @@ func UpdateTracker(trackerUrl *url.URL, torrent types.TorrentFile, peerId string
 	addGetPeersQuery(tracker.url, torrent, peerId, port, uploaded, downloaded, leftToDownload)
 	result, err := getPeers(tracker)
 	if err != nil {
+		slog.Error("error while contacting tracker", slog.String("tracker", tracker.url.String()), slog.String("err", err.Error()))
 		return types.TrackerInformation{}, fmt.Errorf("encountered error while updating tracker, err=%s", err)
 	}
 
@@ -97,6 +98,7 @@ func getFirstSupportedTracker(torrent types.TorrentFile, startTier, startTierPos
 }
 
 func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, peerId string, port uint16, uploaded, downloaded, leftToDownload int) {
+	slog.Debug("creating GET request for tracker", slog.Int("port", int(port)), slog.Int("uploaded", uploaded), slog.Int("downloaded", downloaded), slog.Int("left-to-download", leftToDownload))
 	query := url.Values{}
 	query.Add("info_hash", string(torrent.InfoHash[:]))
 	query.Add("peer_id", peerId)
@@ -111,7 +113,7 @@ func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, peerId str
 
 func getPeers(tracker Tracker) (types.TrackerInformation, error) {
 	timeout := time.Millisecond * 500
-	slog.Debug("requesting peer information from tracker", slog.Int("timeout", int(timeout.Milliseconds())))
+	slog.Debug("posting GET request to tracker", slog.Int("timeout", int(timeout.Milliseconds())))
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

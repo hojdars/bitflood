@@ -71,6 +71,7 @@ func Main(filename string, port uint16) {
 	slog.Debug("peer-id generated", slog.String("peer-id", peerId))
 
 	leftToDownload := torrent.Length - results.PiecesDone*torrent.PieceLength
+	// TODO: Critical - report the correct information to the tracker
 	trackerInfo, err := bittorrent.GetTrackerFromFile(torrent, peerId, port, 0, 0, leftToDownload)
 	if err != nil {
 		slog.Error("error while retrieving peers from tracker", slog.String("err", err.Error()))
@@ -210,6 +211,7 @@ func Main(filename string, port uint16) {
 	}
 
 	// if the partial files were incomplete at start, save them
+	// TODO: Critical - do we really want the partial files even if the whole file is saved? Maybe add results.PiecesDone != len(torrent.PieceHashes)?
 	if alreadySavedNumber < torrent.GetNumberOfPieces() {
 		slog.Info("saving pieces to partial files", slog.Int("pieces", results.PiecesDone))
 		err = savePartialFiles(torrent, &results, &alreadySavedPieces)
