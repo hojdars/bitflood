@@ -114,8 +114,9 @@ func (p *Piece) Deserialize(reader io.Reader) error {
 }
 
 type Results struct {
-	Pieces     []*Piece
-	PiecesDone int
-	Bitfield   bitfield.Bitfield
-	Lock       sync.RWMutex
+	Pieces      []*Piece
+	PiecesDone  int
+	TotalLength int
+	Bitfield    bitfield.Bitfield
+	Lock        sync.RWMutex
 }

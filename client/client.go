@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dustin/go-humanize"
 	"github.com/hojdars/bitflood/bitfield"
 	"github.com/hojdars/bitflood/bittorrent"
 	"github.com/hojdars/bitflood/decode"
@@ -54,7 +53,7 @@ func Main(filename string, port uint16) {
 		os.Exit(1)
 	}
 
-	slog.Info("torrent file decoded", slog.String("file", torrent.Name), slog.String("size", humanize.Bytes(uint64(torrent.Length))), slog.Int("pieces", len(torrent.PieceHashes)))
+	slog.Info("torrent file decoded", slog.String("file", torrent.Name), slog.Int("size", int(torrent.Length)), slog.Int("pieces", len(torrent.PieceHashes)))
 
 	// load the file or PartialFiles, verify all pieces hashes, create BitField
 	results := types.Results{Pieces: make([]*types.Piece, len(torrent.PieceHashes)), Bitfield: bitfield.New(len(torrent.PieceHashes)), Lock: sync.RWMutex{}}
@@ -70,9 +69,8 @@ func Main(filename string, port uint16) {
 	peerId := bittorrent.MakePeerId()
 	slog.Debug("peer-id generated", slog.String("peer-id", peerId))
 
-	leftToDownload := torrent.Length - results.PiecesDone*torrent.PieceLength
-	// TODO: Critical - report the correct information to the tracker
-	trackerInfo, err := bittorrent.GetTrackerFromFile(torrent, peerId, port, 0, 0, leftToDownload)
+	leftToDownload := torrent.Length - results.TotalLength
+	trackerInfo, err := bittorrent.GetTrackerFromFile(torrent, peerId, port, 0, results.TotalLength, leftToDownload)
 	if err != nil {
 		slog.Error("error while retrieving peers from tracker", slog.String("err", err.Error()))
 		os.Exit(1)
@@ -318,13 +316,19 @@ func loadFromFile(torrent types.TorrentFile, results *types.Results) (bool, erro
 	if fileErr == nil {
 		err := loadPiecesFromCompleteFile(fullFile, torrent, results)
 		if err == nil {
-			slog.Debug("loaded data from file", slog.Int("pieces", results.PiecesDone), slog.String("file", torrent.Name))
+			slog.Debug("loaded data from file", slog.String("file", torrent.Name), slog.Int("pieces", results.PiecesDone), slog.Int("length", results.TotalLength))
 			return true, nil
 		}
 	}
 
 	if errors.Is(fileErr, os.ErrNotExist) {
-		return false, loadPiecesFromPartialFiles(torrent, results)
+		err := loadPiecesFromPartialFiles(torrent, results)
+		if err == nil {
+			slog.Debug("loaded data from partial files", slog.Int("pieces", results.PiecesDone), slog.Int("length", results.TotalLength))
+			return false, nil
+		} else {
+			return false, err
+		}
 	} else {
 		return false, fmt.Errorf("error while reading file %s, err=%s", torrent.Name, fileErr)
 	}
@@ -339,11 +343,19 @@ func loadPiecesFromCompleteFile(fullFile io.Reader, torrent types.TorrentFile, r
 	results.PiecesDone = len(torrent.PieceHashes)
 	results.Bitfield = bitfield.NewFull(len(torrent.PieceHashes))
 
+	totalLength := 0
 	for _, p := range results.Pieces {
 		hash := sha1.Sum(p.Data)
 		if hash != torrent.PieceHashes[p.Index] {
 			return fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
 		}
+		totalLength += p.Length
+	}
+
+	if totalLength != torrent.Length {
+		return fmt.Errorf("incorrect sum of pieces' length, expected=%d, got=%d", torrent.Length, totalLength)
+	} else {
+		results.TotalLength = torrent.Length
 	}
 
 	return nil
@@ -368,12 +380,12 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *types.Result
 			return fmt.Errorf("cannot open file=%s, err=%s", filename, err)
 		}
 
-		res, err := file.ReadPartialFile(pfile, &results.Bitfield)
+		readPieces, err := file.ReadPartialFile(pfile, &results.Bitfield)
 		if err != nil {
 			return fmt.Errorf("error while reading partial file, name=%s, err=%s", filename, err)
 		}
 
-		for _, p := range res {
+		for _, p := range readPieces {
 			hash := sha1.Sum(p.Data)
 			if hash != torrent.PieceHashes[p.Index] {
 				return fmt.Errorf("hash mismatch for piece=%d, want=%s, got=%s", p.Index, string(torrent.PieceHashes[p.Index][:]), string(hash[:]))
@@ -381,6 +393,7 @@ func loadPiecesFromPartialFiles(torrent types.TorrentFile, results *types.Result
 			loadedPiece := p
 			results.Pieces[loadedPiece.Index] = &loadedPiece
 			results.PiecesDone += 1
+			results.TotalLength += loadedPiece.Length
 			numberOfPiecesInFile += 1
 			err := results.Bitfield.Set(loadedPiece.Index, true)
 			if err != nil {
