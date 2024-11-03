@@ -159,7 +159,13 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 			err := handleMessage(msg, peer, &progress, *torrent, comms, &seedState)
 			if err != nil {
-				logger.Error("error while handling message", slog.String("err", err.Error()))
+				logger.Error("error while handling message, connection will be closed", slog.String("err", err.Error()))
+				err = conn.Close()
+				if err != nil {
+					logger.Error("error while closing connection", slog.String("err", err.Error()))
+				}
+				comms.ConnectionEnded <- types.ConnectionEnd{Id: peer.ID, Addr: peer.Addr}
+				return
 			}
 		case unchokedPeers, ok := <-comms.PeersToUnchoke:
 			if !ok {
