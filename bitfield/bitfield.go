@@ -16,11 +16,29 @@ func New(length int) Bitfield {
 }
 
 func NewFull(length int) Bitfield {
-	lenBytes := (length / 8) + 1
+	lenBytes := (length / 8)
+	if length%8 > 0 {
+		lenBytes += 1
+	}
 	bytes := make([]byte, lenBytes)
-	for i := range bytes {
+
+	// all except the last are full
+	for i := 0; i < lenBytes-1; i += 1 {
 		bytes[i] = math.MaxUint8
 	}
+
+	// the trailing bits are supposed to be zerod
+	var result byte
+	left := length % 8
+	if left == 0 {
+		result = 255
+	} else {
+		for i := 0; i < left; i += 1 {
+			result |= 1 << (7 - i)
+		}
+	}
+	bytes[lenBytes-1] = result
+
 	return Bitfield{Length: length, data: bytes}
 }
 

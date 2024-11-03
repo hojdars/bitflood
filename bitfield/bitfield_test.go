@@ -40,6 +40,47 @@ func TestBitfield(t *testing.T) {
 		}
 	})
 
+	t.Run("a full bitfield should be padded with zeros at the end", func(t *testing.T) {
+		bitfield := NewFull(10)
+		assert.Equal(t, bitfield.Length, 10)
+		bytes := bitfield.Bytes()
+		assert.Equal(t, len(bytes), 2)
+		assert.Equal(t, bytes[0], 255)
+		assert.Equal(t, bytes[1], 192)
+
+		bitfield = NewFull(1)
+		assert.Equal(t, bitfield.Length, 1)
+		bytes = bitfield.Bytes()
+		assert.Equal(t, len(bytes), 1)
+		assert.Equal(t, bytes[0], 128)
+
+		bitfield = NewFull(7)
+		assert.Equal(t, bitfield.Length, 7)
+		bytes = bitfield.Bytes()
+		assert.Equal(t, len(bytes), 1)
+		assert.Equal(t, bytes[0], 254)
+
+		bitfield = NewFull(8)
+		assert.Equal(t, bitfield.Length, 8)
+		bytes = bitfield.Bytes()
+		assert.Equal(t, len(bytes), 1)
+		assert.Equal(t, bytes[0], 255)
+
+		bitfield = NewFull(16)
+		assert.Equal(t, bitfield.Length, 16)
+		bytes = bitfield.Bytes()
+		assert.Equal(t, len(bytes), 2)
+		assert.Equal(t, bytes[0], 255)
+		assert.Equal(t, bytes[1], 255)
+
+		bitfield = NewFull(15)
+		assert.Equal(t, bitfield.Length, 15)
+		bytes = bitfield.Bytes()
+		assert.Equal(t, len(bytes), 2)
+		assert.Equal(t, bytes[0], 255)
+		assert.Equal(t, bytes[1], 254)
+	})
+
 	t.Run("getting out of bounds should be error", func(t *testing.T) {
 		bitfield := New(10)
 		_, err := bitfield.Get(10)
