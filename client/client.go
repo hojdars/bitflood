@@ -233,7 +233,7 @@ func Main(filename string, port uint16) {
 }
 
 func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms types.Communication, results *types.Results, conns *connections, port uint16) {
-	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		slog.Error("error while listening on port", slog.Int("port", int(port)), slog.String("err", err.Error()))
 		os.Exit(1)

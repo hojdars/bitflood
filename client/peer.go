@@ -95,11 +95,11 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 
 		// if should be uploading (= peer is interested AND i am unchoking), launch goroutine uploading the requested pieces
 		if !peer.Choking && peer.Interested && len(seedState.requested) > 0 {
-			logger.Info("uploading to peer")
 			uploadedIndex, err := uploadChunk(conn, *peer, results, &seedState)
 			if err != nil {
 				logger.Error("error while uploading a chunk", slog.String("err", err.Error()))
 			} else {
+				logger.Info("uploaded to peer", slog.Int("piece-index", seedState.requested[uploadedIndex].index), slog.Int("piece-offset", seedState.requested[uploadedIndex].start))
 				seedState.requested[uploadedIndex] = seedState.requested[len(seedState.requested)-1]
 				seedState.requested = seedState.requested[:len(seedState.requested)-1]
 			}

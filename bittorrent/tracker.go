@@ -113,7 +113,7 @@ func addGetPeersQuery(trackerUrl *url.URL, torrent types.TorrentFile, peerId str
 
 func getPeers(tracker Tracker) (types.TrackerInformation, error) {
 	timeout := time.Millisecond * 500
-	slog.Debug("posting GET request to tracker", slog.Int("timeout", int(timeout.Milliseconds())))
+	slog.Debug("posting GET request to tracker", slog.Int("timeout", int(timeout.Milliseconds())), slog.String("tracker", tracker.url.Host))
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
