@@ -49,19 +49,6 @@ func main() {
 
 	log.Printf("received correct handshake from target=%s, peer-id=%s", conn.RemoteAddr().String(), peer.ID)
 
-	log.Println("sending empty bitfield")
-	bitfield := make([]byte, len(torrent.PieceHashes)/8+1)
-	for i := range bitfield {
-		bitfield[i] = 0
-	}
-	msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgBitfield, Data: bitfield}
-	msgData, err := bittorrent.SerializeMessage(msg)
-	if err != nil {
-		log.Printf("ERROR: failed to serialize bitfield")
-		return
-	}
-	conn.Write(msgData)
-
 	// act as seeder
 	// actAsSeed(conn, &peer)
 
@@ -88,8 +75,11 @@ func actAsSeed(conn net.Conn, peer *types.Peer) {
 
 func actAsLeech(conn net.Conn, peer *types.Peer, torrent types.TorrentFile) {
 	log.Printf("acting as leech")
+
+	// send interested
 	sendMessage(conn, bittorrent.MsgInterested, []byte{})
 
+	// wait for 'unchoke'
 	for {
 		msg, err := bittorrent.DeserializeMessage(conn)
 		if err != nil {
@@ -105,6 +95,7 @@ func actAsLeech(conn net.Conn, peer *types.Peer, torrent types.TorrentFile) {
 		}
 	}
 
+	// send 'request' and send 'have' after receiving and verifying data
 	log.Printf("INFO  [%s]: starting requests", peer.ID)
 	for i := 0; i < 10; i += 1 {
 		err := requestPiece(torrent, conn, peer, i)
@@ -115,6 +106,10 @@ func actAsLeech(conn net.Conn, peer *types.Peer, torrent types.TorrentFile) {
 		}
 		time.Sleep(5 * time.Second)
 	}
+
+	// send 'not interested'
+	sendMessage(conn, bittorrent.MsgNotInterested, []byte{})
+	time.Sleep(5 * time.Second)
 }
 
 func requestPiece(torrent types.TorrentFile, conn net.Conn, peer *types.Peer, pieceIndex int) error {
