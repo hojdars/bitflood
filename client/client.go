@@ -66,6 +66,14 @@ func Main(filename string, port uint16) {
 	alreadySavedNumber := results.PiecesDone
 	alreadySavedPieces := bitfield.Copy(&results.Bitfield)
 
+	// delete partial files if the final file is already saved
+	if alreadySavedFinalFile {
+		err = deletePartialFiles(torrent)
+		if err != nil {
+			slog.Error("encountered error while deleting partial files", slog.String("error", err.Error()))
+		}
+	}
+
 	peerId := bittorrent.MakePeerId()
 	slog.Debug("peer-id generated", slog.String("peer-id", peerId))
 
@@ -196,7 +204,6 @@ func Main(filename string, port uint16) {
 		}
 
 		if results.PiecesDone == len(torrent.PieceHashes) && !alreadySavedFinalFile {
-			alreadySavedFinalFile = true
 			resultFile, err := os.Create(torrent.Name)
 			if err != nil {
 				slog.Error("encountered error while writing result file", slog.String("file", torrent.Name), slog.String("err", err.Error()))
@@ -204,13 +211,19 @@ func Main(filename string, port uint16) {
 			results.Lock.RLock()
 			file.Save(resultFile, results.Pieces)
 			results.Lock.RUnlock()
-			slog.Info("file saved", slog.String("filename", torrent.Name))
+			alreadySavedFinalFile = true
+			slog.Info("file saved", slog.String("filename", resultFile.Name()))
+			fmt.Printf("download finished, saved to file=%s", resultFile.Name())
+
+			err = deletePartialFiles(torrent)
+			if err != nil {
+				slog.Error("encountered error while deleting partial files", slog.String("error", err.Error()))
+			}
 		}
 	}
 
 	// if the partial files were incomplete at start, save them
-	// TODO: Critical - do we really want the partial files even if the whole file is saved? Maybe add results.PiecesDone != len(torrent.PieceHashes)?
-	if alreadySavedNumber < torrent.GetNumberOfPieces() {
+	if !alreadySavedFinalFile && alreadySavedNumber < torrent.GetNumberOfPieces() {
 		slog.Info("saving pieces to partial files", slog.Int("pieces", results.PiecesDone))
 		err = savePartialFiles(torrent, &results, &alreadySavedPieces)
 		if err != nil {
@@ -308,6 +321,18 @@ func savePartialFiles(torrent types.TorrentFile, results *types.Results, savedPi
 		return fmt.Errorf("error while writing partial files, err=%s", err)
 	}
 
+	return nil
+}
+
+func deletePartialFiles(torrent types.TorrentFile) error {
+	fileNumber := (len(torrent.PieceHashes) / 1000) + 1
+	for i := 0; i < fileNumber; i += 1 {
+		filename := fmt.Sprintf("%s.%d.part", torrent.Name[0:20], i)
+		err := os.Remove(filename)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("error while deleting partial file=%s, err=%s", filename, err)
+		}
+	}
 	return nil
 }
 
