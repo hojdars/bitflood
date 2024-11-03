@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -164,6 +165,14 @@ func requestPiece(torrent types.TorrentFile, conn net.Conn, peer *types.Peer, pi
 		log.Printf("ERROR [%s]: hash mismatch for piece %d", peer.ID, pieceIndex)
 	} else {
 		log.Printf("INFO  [%s]: hash verification OK for piece %d", peer.ID, pieceIndex)
+		msg := bittorrent.PeerMessage{KeepAlive: false, Code: bittorrent.MsgHave, Data: make([]byte, 4)}
+		binary.BigEndian.PutUint32(msg.Data[0:4], uint32(pieceIndex))
+		msgData, err := bittorrent.SerializeMessage(msg)
+		if err != nil {
+			return fmt.Errorf("ERROR [%s]: failed to serialize bitfield", peer.ID)
+		}
+		conn.Write(msgData)
+		log.Printf("INFO  [%s]: sent 'have' message %d", peer.ID, pieceIndex)
 	}
 
 	return nil

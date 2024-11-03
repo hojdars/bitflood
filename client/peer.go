@@ -369,7 +369,6 @@ func handleMessage(msg bittorrent.PeerMessage, peer *types.Peer, progress *piece
 		pieceIndex := int(binary.BigEndian.Uint32(msg.Data))
 		logger.Info("peer confirmed upload of piece", slog.Int("index", pieceIndex))
 		comms.Uploaded <- pieceIndex
-		return nil
 	case bittorrent.MsgBitfield:
 		expectedLength := len(torrent.PieceHashes) / 8
 		if len(torrent.PieceHashes)%8 > 0 {

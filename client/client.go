@@ -258,6 +258,7 @@ func listeningServer(ctx context.Context, torrent *types.TorrentFile, comms type
 			Results:         comms.Results,
 			PeerInterested:  comms.PeerInterested,
 			ConnectionEnded: comms.ConnectionEnded,
+			Uploaded:        comms.Uploaded,
 			PeersToUnchoke:  connection.peersToUnchokeCh,
 		}
 
@@ -296,6 +297,7 @@ func connectToPeer(ctx context.Context, torrent *types.TorrentFile, comms types.
 		Results:         comms.Results,
 		PeerInterested:  comms.PeerInterested,
 		ConnectionEnded: comms.ConnectionEnded,
+		Uploaded:        comms.Uploaded,
 		PeersToUnchoke:  connection.peersToUnchokeCh,
 	}
 
