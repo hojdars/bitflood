@@ -27,7 +27,7 @@ func AcceptConnection(conn net.Conn, torrent types.TorrentFile, results *types.R
 		return types.Peer{}, fmt.Errorf("error while getting handshake from target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
 
-	err = sendHandshake(conn, peer.ID, torrent.InfoHash)
+	err = sendHandshake(conn, peerId, torrent.InfoHash)
 	if err != nil {
 		return types.Peer{}, fmt.Errorf("error while sending handshake to target=%s, err=%s", conn.RemoteAddr().String(), err)
 	}
