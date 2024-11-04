@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -79,7 +81,9 @@ func communicationLoop(ctx context.Context, conn net.Conn, torrent *types.Torren
 		for {
 			msg, err := bittorrent.DeserializeMessage(conn)
 			if err != nil {
-				logger.Error("error while receiving message", slog.String("target", peer.Addr.String()), slog.String("err", err.Error()))
+				if !errors.Is(err, io.EOF) {
+					logger.Error("error while receiving message", slog.String("target", peer.Addr.String()), slog.String("err", err.Error()))
+				}
 				close(msgChannel)
 				return
 			}

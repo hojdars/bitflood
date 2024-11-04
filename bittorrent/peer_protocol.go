@@ -3,6 +3,7 @@ package bittorrent
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -229,7 +230,11 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 	lengthBuf := make([]byte, 4)
 	_, err := io.ReadFull(r, lengthBuf)
 	if err != nil {
-		return PeerMessage{}, fmt.Errorf("error while reading message length, err=%s", err)
+		if errors.Is(err, io.EOF) {
+			return PeerMessage{}, io.EOF
+		} else {
+			return PeerMessage{}, fmt.Errorf("error while reading message length, err=%s", err)
+		}
 	}
 
 	length := binary.BigEndian.Uint32(lengthBuf)
@@ -240,14 +245,22 @@ func DeserializeMessage(r io.Reader) (PeerMessage, error) {
 	codeBuf := make([]byte, 1)
 	_, err = io.ReadFull(r, codeBuf)
 	if err != nil {
-		return PeerMessage{}, fmt.Errorf("error while reading message code, err=%s", err)
+		if errors.Is(err, io.EOF) {
+			return PeerMessage{}, io.EOF
+		} else {
+			return PeerMessage{}, fmt.Errorf("error while reading message code, err=%s", err)
+		}
 	}
 
 	dataBuf := make([]byte, length-1)
 	if length-1 > 0 {
 		_, err = io.ReadFull(r, dataBuf)
 		if err != nil {
-			return PeerMessage{}, fmt.Errorf("error while reading message data, err=%s", err)
+			if errors.Is(err, io.EOF) {
+				return PeerMessage{}, io.EOF
+			} else {
+				return PeerMessage{}, fmt.Errorf("error while reading message data, err=%s", err)
+			}
 		}
 	}
 
