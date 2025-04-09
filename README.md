@@ -5,5 +5,7 @@
 ## Usage
 
 ```
-> bitflood debian-12.5.0-amd64-netinst.iso.torrent
+> bitflood debian-12.7.0-amd64-netinst.iso.torrent
 ```
+
+![bitflood](https://github.com/user-attachments/assets/2cc3a0d1-ba1d-47b4-95d9-0fb712e68527)
